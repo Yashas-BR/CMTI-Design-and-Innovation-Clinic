@@ -7,6 +7,7 @@ import {
   TileLayer,
   Tooltip,
   useMap,
+  useMapEvents,
 } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,6 +17,9 @@ type BinMapProps = {
   rows: DataRow[]
   routeStops?: RouteStop[]
   title?: string
+  heightClassName?: string
+  onMapClick?: (latitude: number, longitude: number) => void
+  selectedPoint?: [number, number] | null
 }
 
 type MapPoint = {
@@ -41,6 +45,18 @@ function MapBounds({ points }: { points: Array<[number, number]> }) {
   return null
 }
 
+function MapClickHandler({ onMapClick }: { onMapClick?: (latitude: number, longitude: number) => void }) {
+  useMapEvents({
+    click(event) {
+      if (onMapClick) {
+        onMapClick(event.latlng.lat, event.latlng.lng)
+      }
+    },
+  })
+
+  return null
+}
+
 function fillColor(status: string) {
   const value = status.toLowerCase()
   if (value.includes('low')) return '#34d399'
@@ -48,7 +64,14 @@ function fillColor(status: string) {
   return '#f87171'
 }
 
-function BinMap({ rows, routeStops, title = 'Dustbin Map View' }: BinMapProps) {
+function BinMap({
+  rows,
+  routeStops,
+  title = 'Dustbin Map View',
+  heightClassName = 'h-[440px]',
+  onMapClick,
+  selectedPoint,
+}: BinMapProps) {
   const points = useMemo<MapPoint[]>(() => {
     return rows
       .map((row) => ({
@@ -82,13 +105,14 @@ function BinMap({ rows, routeStops, title = 'Dustbin Map View' }: BinMapProps) {
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="h-[440px] overflow-hidden rounded-2xl border">
+        <div className={`${heightClassName} overflow-hidden rounded-2xl border`}>
           <MapContainer center={center} zoom={13} className="h-full w-full">
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             {bounds.length > 0 ? <MapBounds points={bounds} /> : null}
+            {onMapClick ? <MapClickHandler onMapClick={onMapClick} /> : null}
 
             {routePath.length > 1 ? (
               <Polyline positions={routePath} pathOptions={{ color: '#0f766e', weight: 4, opacity: 0.7 }} />
@@ -121,6 +145,19 @@ function BinMap({ rows, routeStops, title = 'Dustbin Map View' }: BinMapProps) {
                 </Popup>
               </CircleMarker>
             ))}
+
+            {selectedPoint ? (
+              <CircleMarker
+                center={selectedPoint}
+                radius={14}
+                pathOptions={{
+                  color: '#2563eb',
+                  fillColor: '#60a5fa',
+                  fillOpacity: 0.35,
+                  weight: 3,
+                }}
+              />
+            ) : null}
           </MapContainer>
         </div>
       </CardContent>

@@ -29,13 +29,14 @@ BIN_IDS = ["B1", "B2", "B3", "B4", "B5"]
 MIN_DISTANCE_CM = 5
 MAX_DISTANCE_CM = 50
 WARDS = ["Ward-A", "Ward-B", "Ward-C", "Ward-D", "Ward-E"]
-BIN_LOCATIONS = {
-    "B1": {"latitude": 12.9716, "longitude": 77.5946, "location": "Central Ward"},
-    "B2": {"latitude": 12.973, "longitude": 77.5982, "location": "Market Street"},
-    "B3": {"latitude": 12.9698, "longitude": 77.6011, "location": "Lake Road"},
-    "B4": {"latitude": 12.9677, "longitude": 77.5967, "location": "Depot Lane"},
-    "B5": {"latitude": 12.9752, "longitude": 77.5931, "location": "South Junction"},
-}
+
+BIN_REGISTRY: List[Dict[str, Any]] = [
+    {"bin_id": "B1", "ward": "Ward-A", "latitude": 12.9716, "longitude": 77.5946, "location": "Central Ward"},
+    {"bin_id": "B2", "ward": "Ward-B", "latitude": 12.973, "longitude": 77.5982, "location": "Market Street"},
+    {"bin_id": "B3", "ward": "Ward-C", "latitude": 12.9698, "longitude": 77.6011, "location": "Lake Road"},
+    {"bin_id": "B4", "ward": "Ward-D", "latitude": 12.9677, "longitude": 77.5967, "location": "Depot Lane"},
+    {"bin_id": "B5", "ward": "Ward-E", "latitude": 12.9752, "longitude": 77.5931, "location": "South Junction"},
+]
 
 DRIVER_ASSIGNMENTS = {
     "driverA": ["B1", "B2", "B3"],
@@ -75,6 +76,22 @@ class BinRecord:
     urgency_score: float
     distance_from_depot_km: float
     priority_score: float
+
+
+def get_bin_definition(bin_id: str) -> Dict[str, Any] | None:
+    for bin_definition in BIN_REGISTRY:
+        if bin_definition["bin_id"] == bin_id:
+            return bin_definition
+    return None
+
+
+def next_bin_id() -> str:
+    max_index = 0
+    for bin_definition in BIN_REGISTRY:
+        bin_id = str(bin_definition["bin_id"])
+        if bin_id.startswith("B") and bin_id[1:].isdigit():
+            max_index = max(max_index, int(bin_id[1:]))
+    return f"B{max_index + 1}"
 
 
 def create_app_token(username: str, role: str) -> str:
@@ -157,7 +174,8 @@ def generate_data(seed: int, base_fill_rate: float) -> List[BinRecord]:
     random.seed(seed)
     records: List[BinRecord] = []
 
-    for idx, bin_id in enumerate(BIN_IDS):
+    for idx, bin_definition in enumerate(BIN_REGISTRY):
+        bin_id = str(bin_definition["bin_id"])
         distance_cm = float(random.randint(MIN_DISTANCE_CM, MAX_DISTANCE_CM))
         fill_percent = calculate_fill(distance_cm)
         status = assign_status(fill_percent)
@@ -173,10 +191,10 @@ def generate_data(seed: int, base_fill_rate: float) -> List[BinRecord]:
         records.append(
             BinRecord(
                 bin_id=bin_id,
-                ward=WARDS[idx],
-                latitude=BIN_LOCATIONS[bin_id]["latitude"],
-                longitude=BIN_LOCATIONS[bin_id]["longitude"],
-                location=BIN_LOCATIONS[bin_id]["location"],
+                ward=str(bin_definition.get("ward", WARDS[idx % len(WARDS)])),
+                latitude=float(bin_definition["latitude"]),
+                longitude=float(bin_definition["longitude"]),
+                location=str(bin_definition.get("location", bin_id)),
                 distance_cm=distance_cm,
                 fill_percent=fill_percent,
                 status=status,
@@ -239,6 +257,29 @@ def route_plan(records: List[BinRecord], threshold: float) -> List[Dict[str, Any
             }
         )
     return plan
+
+
+def bin_definitions_to_rows() -> List[Dict[str, Any]]:
+    return [
+        {
+            "Bin_ID": bin_definition["bin_id"],
+            "Ward": bin_definition["ward"],
+            "Latitude": bin_definition["latitude"],
+            "Longitude": bin_definition["longitude"],
+            "Location": bin_definition["location"],
+        }
+        for bin_definition in BIN_REGISTRY
+    ]
+
+
+def serialize_bin(bin_definition: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "Bin_ID": bin_definition["bin_id"],
+        "Ward": bin_definition["ward"],
+        "Latitude": bin_definition["latitude"],
+        "Longitude": bin_definition["longitude"],
+        "Location": bin_definition["location"],
+    }
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -490,6 +531,123 @@ def export_csv() -> Tuple[str, int, Dict[str, str]]:
             "Content-Type": "text/csv",
         },
     )
+
+
+@app.route("/api/dashboard/bins", methods=["GET", "POST"])
+def manage_bins() -> Tuple[Dict[str, Any], int]:
+    """List bins or add a new bin for authority users."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Unauthenticated"}, 401
+
+    token = auth_header[7:]
+    try:
+        payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}, 401
+
+    role = payload.get("role", "")
+    if request.method == "GET":
+        return {"bins": bin_definitions_to_rows()}, 200
+
+    if role != "Authority":
+        return {"error": "Unauthorized"}, 403
+
+    data = request.get_json() or {}
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+
+    try:
+        latitude_value = float(latitude)
+        longitude_value = float(longitude)
+    except (TypeError, ValueError):
+        return {"error": "Valid latitude and longitude are required"}, 400
+
+    if not (-90 <= latitude_value <= 90 and -180 <= longitude_value <= 180):
+        return {"error": "Coordinates are out of range"}, 400
+
+    bin_id = str(data.get("bin_id", "")).strip() or next_bin_id()
+    if get_bin_definition(bin_id) is not None:
+        return {"error": "Bin ID already exists"}, 409
+
+    ward = str(data.get("ward", "Ward-New")).strip() or "Ward-New"
+    location = str(data.get("location", f"{bin_id} Location")).strip() or f"{bin_id} Location"
+
+    BIN_REGISTRY.append(
+        {
+            "bin_id": bin_id,
+            "ward": ward,
+            "latitude": latitude_value,
+            "longitude": longitude_value,
+            "location": location,
+        }
+    )
+
+    return {"message": "Bin added successfully", "bin": serialize_bin(BIN_REGISTRY[-1])}, 201
+
+
+@app.route("/api/dashboard/bins/<bin_id>", methods=["PUT", "DELETE"])
+def manage_single_bin(bin_id: str) -> Tuple[Dict[str, Any], int]:
+    """Update or delete a bin for authority users."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Unauthenticated"}, 401
+
+    token = auth_header[7:]
+    try:
+        payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}, 401
+
+    role = payload.get("role", "")
+    if role != "Authority":
+        return {"error": "Unauthorized"}, 403
+
+    bin_definition = get_bin_definition(bin_id)
+    if bin_definition is None:
+        return {"error": "Bin not found"}, 404
+
+    if request.method == "DELETE":
+        BIN_REGISTRY.remove(bin_definition)
+
+        for driver_name, assigned_bins in DRIVER_ASSIGNMENTS.items():
+            DRIVER_ASSIGNMENTS[driver_name] = [assigned_bin for assigned_bin in assigned_bins if assigned_bin != bin_id]
+
+        return {"message": "Bin deleted successfully", "bin_id": bin_id}, 200
+
+    data = request.get_json() or {}
+
+    if "ward" in data:
+        ward_value = str(data.get("ward", "")).strip()
+        if not ward_value:
+            return {"error": "Ward cannot be empty"}, 400
+        bin_definition["ward"] = ward_value
+
+    if "location" in data:
+        location_value = str(data.get("location", "")).strip()
+        if not location_value:
+            return {"error": "Location cannot be empty"}, 400
+        bin_definition["location"] = location_value
+
+    if "latitude" in data:
+        try:
+            latitude_value = float(data["latitude"])
+        except (TypeError, ValueError):
+            return {"error": "Valid latitude is required"}, 400
+        if not (-90 <= latitude_value <= 90):
+            return {"error": "Latitude is out of range"}, 400
+        bin_definition["latitude"] = latitude_value
+
+    if "longitude" in data:
+        try:
+            longitude_value = float(data["longitude"])
+        except (TypeError, ValueError):
+            return {"error": "Valid longitude is required"}, 400
+        if not (-180 <= longitude_value <= 180):
+            return {"error": "Longitude is out of range"}, 400
+        bin_definition["longitude"] = longitude_value
+
+    return {"message": "Bin updated successfully", "bin": serialize_bin(bin_definition)}, 200
 
 
 @app.route("/health", methods=["GET"])

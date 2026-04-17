@@ -38,3 +38,11 @@ export type DashboardControls = {
   base_fill_rate: number
   priority_threshold: number
 }
+
+export type BinDefinition = {
+  Bin_ID: string
+  Ward: string
+  Latitude: number
+  Longitude: number
+  Location: string
+}
