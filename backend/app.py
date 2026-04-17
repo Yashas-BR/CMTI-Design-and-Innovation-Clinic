@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 import random
 from dataclasses import asdict, dataclass
@@ -30,13 +31,16 @@ MIN_DISTANCE_CM = 5
 MAX_DISTANCE_CM = 50
 WARDS = ["Ward-A", "Ward-B", "Ward-C", "Ward-D", "Ward-E"]
 
-BIN_REGISTRY: List[Dict[str, Any]] = [
+DEFAULT_BIN_REGISTRY: List[Dict[str, Any]] = [
     {"bin_id": "B1", "ward": "Ward-A", "latitude": 12.9716, "longitude": 77.5946, "location": "Central Ward"},
     {"bin_id": "B2", "ward": "Ward-B", "latitude": 12.973, "longitude": 77.5982, "location": "Market Street"},
     {"bin_id": "B3", "ward": "Ward-C", "latitude": 12.9698, "longitude": 77.6011, "location": "Lake Road"},
     {"bin_id": "B4", "ward": "Ward-D", "latitude": 12.9677, "longitude": 77.5967, "location": "Depot Lane"},
     {"bin_id": "B5", "ward": "Ward-E", "latitude": 12.9752, "longitude": 77.5931, "location": "South Junction"},
 ]
+
+BIN_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "bin_registry.json")
+BIN_REGISTRY: List[Dict[str, Any]] = []
 
 DRIVER_ASSIGNMENTS = {
     "driverA": ["B1", "B2", "B3"],
@@ -45,8 +49,15 @@ DRIVER_ASSIGNMENTS = {
 }
 
 USERS = {
-    "auth": {"password": "auth@123", "role": "Authority"},
+    "admin": {"password": "admin@123", "role": "Authority"},
+    "operator": {"password": "operator@123", "role": "Operator"},
     "driverA": {"password": "driverA@123", "role": "Driver"},
+}
+
+SIMULATION_CONTROLS: Dict[str, float] = {
+    "seed": 42,
+    "base_fill_rate": 3.0,
+    "priority_threshold": 70.0,
 }
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -54,6 +65,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:5000/api/auth/google/callback")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5175")
 GOOGLE_AUTHORITY_EMAIL = os.getenv("GOOGLE_AUTHORITY_EMAIL", "").lower().strip()
+GOOGLE_OPERATOR_EMAIL = os.getenv("GOOGLE_OPERATOR_EMAIL", "").lower().strip()
 GOOGLE_DRIVERA_EMAIL = os.getenv("GOOGLE_DRIVERA_EMAIL", "").lower().strip()
 
 GOOGLE_OAUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -83,6 +95,52 @@ def get_bin_definition(bin_id: str) -> Dict[str, Any] | None:
         if bin_definition["bin_id"] == bin_id:
             return bin_definition
     return None
+
+
+def save_bin_registry() -> None:
+    """Persist current bin registry to disk."""
+    with open(BIN_REGISTRY_FILE, "w", encoding="utf-8") as file_handle:
+        json.dump(BIN_REGISTRY, file_handle, indent=2)
+
+
+def load_bin_registry() -> List[Dict[str, Any]]:
+    """Load bin registry from disk, falling back to defaults."""
+    if not os.path.exists(BIN_REGISTRY_FILE):
+        return [dict(item) for item in DEFAULT_BIN_REGISTRY]
+
+    try:
+        with open(BIN_REGISTRY_FILE, "r", encoding="utf-8") as file_handle:
+            loaded = json.load(file_handle)
+    except (json.JSONDecodeError, OSError):
+        return [dict(item) for item in DEFAULT_BIN_REGISTRY]
+
+    if not isinstance(loaded, list):
+        return [dict(item) for item in DEFAULT_BIN_REGISTRY]
+
+    normalized: List[Dict[str, Any]] = []
+    for item in loaded:
+        if not isinstance(item, dict):
+            continue
+
+        try:
+            normalized.append(
+                {
+                    "bin_id": str(item["bin_id"]),
+                    "ward": str(item["ward"]),
+                    "latitude": float(item["latitude"]),
+                    "longitude": float(item["longitude"]),
+                    "location": str(item["location"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    return normalized if normalized else [dict(item) for item in DEFAULT_BIN_REGISTRY]
+
+
+BIN_REGISTRY = load_bin_registry()
+if not os.path.exists(BIN_REGISTRY_FILE):
+    save_bin_registry()
 
 
 def next_bin_id() -> str:
@@ -124,14 +182,26 @@ def resolve_google_user(email: str, requested_role: str) -> Tuple[str, str] | No
     normalized_email = email.lower().strip()
 
     if GOOGLE_AUTHORITY_EMAIL and normalized_email == GOOGLE_AUTHORITY_EMAIL:
-        return ("auth", "Authority")
+        return ("admin", "Authority")
+    if GOOGLE_OPERATOR_EMAIL and normalized_email == GOOGLE_OPERATOR_EMAIL:
+        return ("operator", "Operator")
     if GOOGLE_DRIVERA_EMAIL and normalized_email == GOOGLE_DRIVERA_EMAIL:
         return ("driverA", "Driver")
 
     # Fallback for local demo when allowlist env vars are not configured.
     if requested_role == "Authority":
-        return ("auth", "Authority")
+        return ("admin", "Authority")
+    if requested_role == "Operator":
+        return ("operator", "Operator")
     return ("driverA", "Driver")
+
+
+def read_simulation_controls() -> Tuple[int, float, float]:
+    """Return simulation controls with strict types."""
+    seed = int(SIMULATION_CONTROLS["seed"])
+    base_fill_rate = float(SIMULATION_CONTROLS["base_fill_rate"])
+    priority_threshold = float(SIMULATION_CONTROLS["priority_threshold"])
+    return seed, base_fill_rate, priority_threshold
 
 
 def calculate_fill(distance_cm: float, bin_height_cm: float = BIN_HEIGHT_CM) -> float:
@@ -305,7 +375,7 @@ def google_auth_url() -> Tuple[Dict[str, Any], int]:
 
     data = request.get_json() or {}
     requested_role = str(data.get("role", "Driver"))
-    if requested_role not in {"Authority", "Driver"}:
+    if requested_role not in {"Authority", "Operator", "Driver"}:
         requested_role = "Driver"
 
     state = create_google_state(role=requested_role)
@@ -391,6 +461,59 @@ def verify_token() -> Tuple[Dict[str, Any], int]:
         return {"error": "Invalid token"}, 401
 
 
+@app.route("/api/dashboard/controls", methods=["GET", "PUT"])
+def simulation_controls() -> Tuple[Dict[str, Any], int]:
+    """Get controls for all users, update controls for operator only."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Unauthenticated"}, 401
+
+    token = auth_header[7:]
+    try:
+        payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}, 401
+
+    role = payload.get("role", "")
+
+    if request.method == "GET":
+        seed, base_fill_rate, priority_threshold = read_simulation_controls()
+        return {
+            "seed": seed,
+            "base_fill_rate": base_fill_rate,
+            "priority_threshold": priority_threshold,
+        }, 200
+
+    if role != "Operator":
+        return {"error": "Only operator can update simulation controls"}, 403
+
+    data = request.get_json() or {}
+    try:
+        seed = int(data.get("seed", SIMULATION_CONTROLS["seed"]))
+        base_fill_rate = float(data.get("base_fill_rate", SIMULATION_CONTROLS["base_fill_rate"]))
+        priority_threshold = float(data.get("priority_threshold", SIMULATION_CONTROLS["priority_threshold"]))
+    except (TypeError, ValueError):
+        return {"error": "Simulation controls must be numeric"}, 400
+
+    if seed < 1 or seed > 999:
+        return {"error": "Seed must be between 1 and 999"}, 400
+    if base_fill_rate < 0.5 or base_fill_rate > 80:
+        return {"error": "Base fill rate must be between 0.5 and 80"}, 400
+    if priority_threshold < 40 or priority_threshold > 95:
+        return {"error": "Priority threshold must be between 40 and 95"}, 400
+
+    SIMULATION_CONTROLS["seed"] = seed
+    SIMULATION_CONTROLS["base_fill_rate"] = round(base_fill_rate, 2)
+    SIMULATION_CONTROLS["priority_threshold"] = round(priority_threshold, 2)
+
+    return {
+        "message": "Simulation controls updated",
+        "seed": int(SIMULATION_CONTROLS["seed"]),
+        "base_fill_rate": float(SIMULATION_CONTROLS["base_fill_rate"]),
+        "priority_threshold": float(SIMULATION_CONTROLS["priority_threshold"]),
+    }, 200
+
+
 @app.route("/api/dashboard/data", methods=["GET"])
 def get_dashboard_data() -> Tuple[Dict[str, Any], int]:
     """Get bin data and metrics, optionally filtered for driver."""
@@ -407,15 +530,9 @@ def get_dashboard_data() -> Tuple[Dict[str, Any], int]:
     role = payload.get("role", "")
     username = payload.get("username", "")
 
-    seed = int(request.args.get("seed", 42))
-    base_fill_rate = float(request.args.get("base_fill_rate", 3.0))
-    priority_threshold = float(request.args.get("priority_threshold", 70.0))
+    seed, base_fill_rate, priority_threshold = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
-
-    if role == "Driver":
-        if username in DRIVER_ASSIGNMENTS:
-            records = filter_records_for_driver(records, DRIVER_ASSIGNMENTS[username])
 
     rows = records_to_rows(records)
 
@@ -431,7 +548,9 @@ def get_dashboard_data() -> Tuple[Dict[str, Any], int]:
         "avg_fill": avg_fill,
         "urgent_bins": urgent_bins,
         "rows": rows,
-        "driver_assignment": DRIVER_ASSIGNMENTS if role == "Authority" else {username: DRIVER_ASSIGNMENTS.get(username, [])},
+        "driver_assignment": DRIVER_ASSIGNMENTS
+        if role in {"Authority", "Operator"}
+        else {username: DRIVER_ASSIGNMENTS.get(username, [])},
     }, 200
 
 
@@ -451,14 +570,9 @@ def get_priority_queue() -> Tuple[Dict[str, Any], int]:
     role = payload.get("role", "")
     username = payload.get("username", "")
 
-    seed = int(request.args.get("seed", 42))
-    base_fill_rate = float(request.args.get("base_fill_rate", 3.0))
+    seed, base_fill_rate, _ = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
-
-    if role == "Driver":
-        if username in DRIVER_ASSIGNMENTS:
-            records = filter_records_for_driver(records, DRIVER_ASSIGNMENTS[username])
 
     rows = sorted(records_to_rows(records), key=lambda row: float(row["Priority"]), reverse=True)
     return {"queue": rows}, 200
@@ -480,15 +594,9 @@ def get_route_plan() -> Tuple[Dict[str, Any], int]:
     role = payload.get("role", "")
     username = payload.get("username", "")
 
-    seed = int(request.args.get("seed", 42))
-    base_fill_rate = float(request.args.get("base_fill_rate", 3.0))
-    priority_threshold = float(request.args.get("priority_threshold", 70.0))
+    seed, base_fill_rate, priority_threshold = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
-
-    if role == "Driver":
-        if username in DRIVER_ASSIGNMENTS:
-            records = filter_records_for_driver(records, DRIVER_ASSIGNMENTS[username])
 
     plan = route_plan(records, threshold=priority_threshold)
     return {"plan": plan, "role": role}, 200
@@ -508,11 +616,10 @@ def export_csv() -> Tuple[str, int, Dict[str, str]]:
         return "Invalid token", 401, {}
 
     role = payload.get("role", "")
-    if role != "Authority":
+    if role not in {"Authority", "Operator"}:
         return "Unauthorized", 403, {}
 
-    seed = int(request.args.get("seed", 42))
-    base_fill_rate = float(request.args.get("base_fill_rate", 3.0))
+    seed, base_fill_rate, _ = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
 
@@ -582,6 +689,7 @@ def manage_bins() -> Tuple[Dict[str, Any], int]:
             "location": location,
         }
     )
+    save_bin_registry()
 
     return {"message": "Bin added successfully", "bin": serialize_bin(BIN_REGISTRY[-1])}, 201
 
@@ -609,6 +717,7 @@ def manage_single_bin(bin_id: str) -> Tuple[Dict[str, Any], int]:
 
     if request.method == "DELETE":
         BIN_REGISTRY.remove(bin_definition)
+        save_bin_registry()
 
         for driver_name, assigned_bins in DRIVER_ASSIGNMENTS.items():
             DRIVER_ASSIGNMENTS[driver_name] = [assigned_bin for assigned_bin in assigned_bins if assigned_bin != bin_id]
@@ -646,6 +755,8 @@ def manage_single_bin(bin_id: str) -> Tuple[Dict[str, Any], int]:
         if not (-180 <= longitude_value <= 180):
             return {"error": "Longitude is out of range"}, 400
         bin_definition["longitude"] = longitude_value
+
+    save_bin_registry()
 
     return {"message": "Bin updated successfully", "bin": serialize_bin(bin_definition)}, 200
 

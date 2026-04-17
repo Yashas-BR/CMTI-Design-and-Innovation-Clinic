@@ -78,6 +78,9 @@ type DashboardPageProps = {
 }
 
 function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
+  const isAdmin = user.role === 'Authority'
+  const isOperator = user.role === 'Operator'
+
   const [activeTab, setActiveTab] = useState<DashboardTab>('monitoring')
   const [data, setData] = useState<DashboardData | null>(null)
   const [priority, setPriority] = useState<PriorityData | null>(null)
@@ -119,6 +122,9 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [controlsSaving, setControlsSaving] = useState(false)
+  const [controlsError, setControlsError] = useState('')
+  const [controlsNotice, setControlsNotice] = useState('')
 
   const fetchDashboardData = useCallback(async (silent = false) => {
     if (!silent) {
@@ -128,24 +134,15 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
 
     try {
-      const params = {
-        seed: controls.seed,
-        base_fill_rate: controls.base_fill_rate,
-        priority_threshold: controls.priority_threshold,
-      }
-
       const [dashboardResponse, priorityResponse, routeResponse] = await Promise.all([
         axios.get<DashboardData>(`${apiUrl}/dashboard/data`, {
           headers: { Authorization: `Bearer ${token}` },
-          params,
         }),
         axios.get<PriorityData>(`${apiUrl}/dashboard/priority`, {
           headers: { Authorization: `Bearer ${token}` },
-          params,
         }),
         axios.get<RouteData>(`${apiUrl}/dashboard/route`, {
           headers: { Authorization: `Bearer ${token}` },
-          params,
         }),
       ])
 
@@ -166,10 +163,21 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
         setRefreshing(false)
       }
     }
-  }, [apiUrl, controls, token])
+  }, [apiUrl, token])
+
+  const fetchSimulationControls = useCallback(async () => {
+    try {
+      const response = await axios.get<DashboardControls>(`${apiUrl}/dashboard/controls`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setControls(response.data)
+    } catch {
+      setControlsError('Unable to load simulation controls')
+    }
+  }, [apiUrl, token])
 
   const fetchBins = useCallback(async () => {
-    if (user.role !== 'Authority') {
+    if (!isAdmin) {
       setBins([])
       return
     }
@@ -185,11 +193,12 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     } finally {
       setBinsLoading(false)
     }
-  }, [apiUrl, token, user.role])
+  }, [apiUrl, isAdmin, token])
 
   useEffect(() => {
+    void fetchSimulationControls()
     void fetchDashboardData()
-  }, [fetchDashboardData])
+  }, [fetchDashboardData, fetchSimulationControls])
 
   useEffect(() => {
     void fetchBins()
@@ -201,14 +210,18 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
 
     const intervalId = window.setInterval(() => {
+      if (binDialogOpen || editBinDialogOpen) {
+        return
+      }
+
       void fetchDashboardData(true)
-      if (user.role === 'Authority') {
+      if (isAdmin) {
         void fetchBins()
       }
     }, 20000)
 
     return () => window.clearInterval(intervalId)
-  }, [autoRefreshEnabled, fetchBins, fetchDashboardData, user.role])
+  }, [autoRefreshEnabled, binDialogOpen, editBinDialogOpen, fetchBins, fetchDashboardData, isAdmin])
 
   const resetBinForm = () => {
     setBinError('')
@@ -228,6 +241,39 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     setDeleteCandidateBinId('')
     setBinDialogOpen(true)
     void fetchBins()
+  }
+
+  const handleApplyControls = async () => {
+    setControlsSaving(true)
+    setControlsError('')
+    setControlsNotice('')
+
+    try {
+      await axios.put(
+        `${apiUrl}/dashboard/controls`,
+        {
+          seed: controls.seed,
+          base_fill_rate: controls.base_fill_rate,
+          priority_threshold: controls.priority_threshold,
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
+      setControlsNotice('Simulation controls applied by operator')
+      await fetchDashboardData()
+      if (isAdmin) {
+        await fetchBins()
+      }
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        setControlsError((error.response?.data as { error?: string })?.error ?? 'Failed to apply controls')
+      } else {
+        setControlsError('Failed to apply controls')
+      }
+    } finally {
+      setControlsSaving(false)
+    }
   }
 
   const handleMapPick = (latitude: number, longitude: number) => {
@@ -412,7 +458,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
               <div className="rounded-xl border bg-white/70 px-3 py-2 text-slate-700">
                 {user.username} ({user.role})
               </div>
-              {user.role === 'Authority' ? (
+              {isAdmin ? (
                 <Button variant="outline" onClick={openAddBinDialog}>
                   <Plus className="mr-1 h-4 w-4" />
                   Update Bin
@@ -426,7 +472,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
           </div>
         </header>
 
-        {user.role === 'Authority' ? (
+        {isAdmin ? (
           <Dialog
             open={binDialogOpen}
             onOpenChange={(open) => {
@@ -436,7 +482,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
               }
             }}
           >
-            <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+            <DialogContent className="h-[90vh] w-[96vw] max-w-[calc(100vw-1.5rem)] overflow-y-auto sm:w-[95vw] sm:!max-w-[1300px]">
               <DialogHeader>
                 <DialogTitle>Update Bin Registry</DialogTitle>
                 <DialogDescription>
@@ -451,7 +497,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                 </UiTabsList>
 
                 <UiTabsContent value="add" className="mt-5 space-y-5">
-                  <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="grid gap-6 md:grid-cols-[0.8fr_1.2fr]">
                     <div className="space-y-4">
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
@@ -526,7 +572,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                     <BinMap
                       rows={data?.rows ?? []}
                       title="Click the map to place a new bin"
-                      heightClassName="h-[320px] sm:h-[420px] lg:h-[520px]"
+                      heightClassName="h-[360px] sm:h-[460px] lg:h-[620px]"
                       onMapClick={handleMapPick}
                       selectedPoint={selectedPoint}
                     />
@@ -582,7 +628,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
           </Dialog>
         ) : null}
 
-        {user.role === 'Authority' ? (
+        {isAdmin ? (
           <Dialog
             open={editBinDialogOpen}
             onOpenChange={(open) => {
@@ -659,15 +705,15 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
           </Dialog>
         ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-          {user.role === 'Authority' ? (
+        <div className={isOperator ? 'grid gap-6 lg:grid-cols-[300px_1fr]' : 'grid gap-6'}>
+          {isOperator ? (
             <Card className="h-fit border-white/70 bg-white/75 shadow-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <SlidersHorizontal className="h-4 w-4" />
-                  Simulation Controls
+                  Operator Simulation Controls
                 </CardTitle>
-                <CardDescription>Adjust the scenario to compare routing outcomes.</CardDescription>
+                <CardDescription>Only operator can update synthetic simulation settings.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -687,7 +733,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                     id="fill-rate"
                     type="number"
                     min={0.5}
-                    max={8}
+                    max={80}
                     step={0.5}
                     value={controls.base_fill_rate}
                     onChange={(event) => updateControl('base_fill_rate', Number.parseFloat(event.target.value))}
@@ -705,6 +751,19 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                     onChange={(event) => updateControl('priority_threshold', Number.parseFloat(event.target.value))}
                   />
                 </div>
+                {controlsError ? (
+                  <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {controlsError}
+                  </p>
+                ) : null}
+                {controlsNotice ? (
+                  <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                    {controlsNotice}
+                  </p>
+                ) : null}
+                <Button onClick={handleApplyControls} disabled={controlsSaving} className="w-full">
+                  {controlsSaving ? 'Applying...' : 'Apply controls'}
+                </Button>
               </CardContent>
             </Card>
           ) : null}
@@ -719,7 +778,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
               <>
                 <MetricsRow data={data} />
 
-                {user.role === 'Authority' && data.driver_assignment ? (
+                {isAdmin && data.driver_assignment ? (
                   <Card className="border-white/70 bg-white/75 shadow-sm">
                     <CardHeader>
                       <CardTitle>Driver Assignment Matrix</CardTitle>
@@ -756,7 +815,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                     <>
                       <h2 className="text-lg font-semibold">Live Bin Monitoring</h2>
                       <BinMap rows={data.rows} title="Dustbin Locations & Fill Status" />
-                      {user.role === 'Authority' ? (
+                      {isAdmin ? (
                         <Card className="border-white/70 bg-white/75 shadow-sm">
                           <CardHeader>
                             <CardTitle>Bin Registry Management</CardTitle>
@@ -865,15 +924,11 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                     <>
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <h2 className="text-lg font-semibold">Priority Dispatch Queue</h2>
-                        {user.role === 'Authority' ? (
+                        {isAdmin || isOperator ? (
                           <Button
                             variant="outline"
                             onClick={() => {
-                              window.open(
-                                `${apiUrl}/dashboard/export?seed=${controls.seed}&base_fill_rate=${controls.base_fill_rate}`,
-                                '_blank',
-                                'noopener,noreferrer',
-                              )
+                              window.open(`${apiUrl}/dashboard/export`, '_blank', 'noopener,noreferrer')
                             }}
                           >
                             <Download className="mr-1 h-4 w-4" />

@@ -157,6 +157,10 @@ function LoginPage({ onLogin, apiUrl, authError }: LoginPageProps) {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? 'Logging in...' : 'Login'}
                   </Button>
+
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Admin login: username admin, password admin@123. | Operator login: username operator, password operator@123.
+                  </p>
                 </form>
               </TabsContent>
 
@@ -169,6 +173,7 @@ function LoginPage({ onLogin, apiUrl, authError }: LoginPageProps) {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Authority">Authority</SelectItem>
+                      <SelectItem value="Operator">Operator</SelectItem>
                       <SelectItem value="Driver">Driver</SelectItem>
                     </SelectContent>
                   </Select>

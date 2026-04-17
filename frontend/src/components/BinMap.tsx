@@ -57,6 +57,34 @@ function MapClickHandler({ onMapClick }: { onMapClick?: (latitude: number, longi
   return null
 }
 
+function MapResizeHandler() {
+  const map = useMap()
+
+  useEffect(() => {
+    const container = map.getContainer()
+
+    const refreshSize = () => {
+      map.invalidateSize()
+    }
+
+    const frame = window.requestAnimationFrame(refreshSize)
+    const timeout = window.setTimeout(refreshSize, 180)
+
+    const observer = new ResizeObserver(() => {
+      refreshSize()
+    })
+    observer.observe(container)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+      observer.disconnect()
+    }
+  }, [map])
+
+  return null
+}
+
 function fillColor(status: string) {
   const value = status.toLowerCase()
   if (value.includes('low')) return '#34d399'
@@ -107,6 +135,7 @@ function BinMap({
       <CardContent>
         <div className={`${heightClassName} overflow-hidden rounded-2xl border`}>
           <MapContainer center={center} zoom={13} scrollWheelZoom={false} className="h-full w-full">
+            <MapResizeHandler />
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

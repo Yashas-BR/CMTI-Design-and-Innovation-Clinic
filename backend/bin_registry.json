@@ -1,0 +1,44 @@
+[
+  {
+    "bin_id": "B1",
+    "ward": "Ward-A",
+    "latitude": 12.9716,
+    "longitude": 77.5946,
+    "location": "Central Ward"
+  },
+  {
+    "bin_id": "B2",
+    "ward": "Ward-B",
+    "latitude": 12.973,
+    "longitude": 77.5982,
+    "location": "Market Street"
+  },
+  {
+    "bin_id": "B3",
+    "ward": "Ward-C",
+    "latitude": 12.9698,
+    "longitude": 77.6011,
+    "location": "Lake Road"
+  },
+  {
+    "bin_id": "B4",
+    "ward": "Ward-D",
+    "latitude": 12.9677,
+    "longitude": 77.5967,
+    "location": "Depot Lane"
+  },
+  {
+    "bin_id": "B5",
+    "ward": "Ward-E",
+    "latitude": 12.9752,
+    "longitude": 77.5931,
+    "location": "South Junction"
+  },
+  {
+    "bin_id": "B06",
+    "ward": "Peenya",
+    "latitude": 13.034654,
+    "longitude": 77.534954,
+    "location": "CMTI"
+  }
+]
