@@ -10,7 +10,37 @@ Scope: Current implementation status for API routes, related service behavior, a
 | GET    | /api/v1/health                                   | No                        | Basic health status with app version            |
 | GET    | /api/v1/health/live                              | No                        | Liveness probe                                  |
 | GET    | /api/v1/health/ready                             | No                        | Readiness probe                                 |
+| POST   | /api/v1/auth/login                               | No                        | Login and access/refresh token issue            |
+| POST   | /api/v1/auth/refresh                             | No                        | Access token refresh from refresh token         |
+| POST   | /api/v1/auth/drivers                             | Yes (authority only)      | Create driver user in caller organization       |
+| GET    | /api/v1/users                                    | Yes (authority only)      | List users with filters/pagination              |
+| GET    | /api/v1/users/{user_id}                          | Yes (authority only)      | Read one user                                   |
+| POST   | /api/v1/users/{user_id}/roles/add                | Yes (authority only)      | Explicitly add role(s) to one user              |
+| POST   | /api/v1/users/{user_id}/roles/remove             | Yes (authority only)      | Explicitly remove role(s) from one user         |
+| POST   | /api/v1/users/{user_id}/deactivate               | Yes (authority only)      | Soft deactivate one user                        |
+| POST   | /api/v1/users/{user_id}/password/reset           | Yes (authority only)      | Reset one user password                         |
 | POST   | /api/v1/mqtt/ingest                              | No (currently open)       | Ingest one MQTT envelope and trigger evaluation |
+| POST   | /api/v1/bins                                     | Yes (authority only)      | Create one bin                                  |
+| GET    | /api/v1/bins                                     | Yes (authority or driver) | List bins with filters/pagination               |
+| GET    | /api/v1/bins/search                              | Yes (authority or driver) | Search bins by code/name/address                |
+| GET    | /api/v1/bins/{bin_id}                            | Yes (authority or driver) | Read one bin                                    |
+| PATCH  | /api/v1/bins/{bin_id}                            | Yes (authority only)      | Update one bin                                  |
+| POST   | /api/v1/bins/{bin_id}/deactivate                 | Yes (authority only)      | Soft deactivate one bin                         |
+| GET    | /api/v1/bins/{bin_id}/assignments                | Yes (authority or driver) | Bin-device assignment history for one bin       |
+| POST   | /api/v1/devices                                  | Yes (authority only)      | Create one device                               |
+| GET    | /api/v1/devices                                  | Yes (authority or driver) | List devices with filters/pagination            |
+| GET    | /api/v1/devices/search                           | Yes (authority or driver) | Search devices by uid/client id                 |
+| GET    | /api/v1/devices/{device_id}                      | Yes (authority or driver) | Read one device                                 |
+| PATCH  | /api/v1/devices/{device_id}                      | Yes (authority only)      | Update one device                               |
+| POST   | /api/v1/devices/{device_id}/deactivate           | Yes (authority only)      | Soft deactivate one device                      |
+| POST   | /api/v1/devices/{device_id}/assign               | Yes (authority only)      | Assign/reassign device to bin                   |
+| GET    | /api/v1/devices/{device_id}/assignments          | Yes (authority or driver) | Assignment history for one device               |
+| GET    | /api/v1/alerts                                   | Yes (authority or driver) | List/filter alerts                              |
+| GET    | /api/v1/alerts/{alert_id}                        | Yes (authority or driver) | Read one alert                                  |
+| POST   | /api/v1/alerts/{alert_id}/acknowledge            | Yes (authority or driver) | Acknowledge one alert                           |
+| POST   | /api/v1/alerts/{alert_id}/resolve                | Yes (authority or driver) | Resolve one alert                               |
+| POST   | /api/v1/alerts/{alert_id}/assign                 | Yes (authority or driver) | Assign/unassign one alert                       |
+| GET    | /api/v1/alerts/{alert_id}/events                 | Yes (authority or driver) | Alert lifecycle event history                   |
 | GET    | /api/v1/telemetry/bins/{bin_code}/latest         | Yes (authority or driver) | Latest computed state for one bin               |
 | GET    | /api/v1/telemetry/bins/{bin_code}/history?limit= | Yes (authority or driver) | Recent telemetry points for one bin             |
 | GET    | /api/v1/telemetry/live/summary                   | Yes (authority or driver) | Aggregate live counters for dashboard           |
@@ -93,13 +123,59 @@ Implemented dependency-based JWT guard flow:
 - Opens `device_offline` alerts when telemetry inactivity crosses configured threshold.
 - Resolves offline alerts when telemetry resumes.
 
-### 2.6 Current Test Coverage (implemented)
+### 2.6 Bin, Device, and Assignment APIs
+
+- Bin CRUD routes are implemented for create/list/search/get/update/deactivate.
+- Device CRUD routes are implemented for create/list/search/get/update/deactivate.
+- Assignment endpoints are implemented:
+  - assign/reassign device to bin
+  - list bin assignment history
+  - list device assignment history
+- Organization scoping is enforced in service-layer queries for these resources.
+
+### 2.7 Auth Management Routes
+
+- `POST /api/v1/auth/login` implemented for driver, authority_operator, and authority_admin.
+- `POST /api/v1/auth/refresh` implemented for refresh-token based access token renewal.
+- `POST /api/v1/auth/drivers` implemented for authority roles to create driver users and assign `driver` role.
+
+### 2.8 User Administration Routes
+
+- User administration routes are implemented:
+  - list users
+  - get one user
+  - explicit role add
+  - explicit role remove
+  - user deactivate
+  - user password reset (admin/operator initiated)
+- Authority roles (`authority_admin` and `authority_operator`) share the same access level for these routes.
+- Explicit safeguards are included to prevent removal/deactivation of the last `authority_admin` user in an organization.
+
+### 2.9 Alert Management Routes
+
+- Alert management routes are implemented for list/get/acknowledge/resolve/assign/events.
+- Drivers are allowed to perform alert actions with service-layer scope checks.
+- Manual alert actions append `alert_events` entries with `actor_user_id` for auditability.
+
+### 2.10 Current Test Coverage (implemented)
 
 - Route-contract tests for:
   - MQTT ingest success response
   - telemetry latest response
   - telemetry summary response
   - telemetry auth rejection when no credentials
+  - auth login response contract
+  - auth refresh response contract
+  - driver creation response contract
+  - auth guard rejection for driver creation
+  - bin route contracts (create/list)
+  - assignment route contract (assign device)
+  - user list response contract
+  - explicit role add response contract
+  - password reset response contract
+  - alert list response contract
+  - alert acknowledge response contract
+  - alert assign forbidden contract (driver scope violation)
 
 ## 3. Known Remaining Gaps / Missing Functionalities
 
@@ -107,10 +183,6 @@ Implemented dependency-based JWT guard flow:
 
 Not yet exposed as API endpoints:
 
-- Bin CRUD (create/update/deactivate/list/search).
-- Device CRUD and bin-device assignment history APIs.
-- User/auth management routes (login/token issue/refresh/user-role administration).
-- Alert management routes (acknowledge, resolve manually, assign to user, list/filter alerts).
 - Collection operations routes (vehicles, shifts, route planning, route assignments, stop updates).
 - Prediction/optimization routes (forecasts, optimization runs, model controls).
 - Audit log query routes.
@@ -141,7 +213,9 @@ Not yet exposed as API endpoints:
 
 What is working now:
 
-- Core route set for health, ingestion, and telemetry reads.
+- Core route set for health, ingestion, telemetry reads, bin/device CRUD, and assignment history.
+- Auth routes for login, refresh token, authority-driven driver creation, and user administration workflows.
+- Alert management routes for operational lifecycle actions and event history.
 - Alert lifecycle updates from ingestion.
 - Role-guarded telemetry routes.
 - MQTT worker loop scheduling fix for async loop safety.

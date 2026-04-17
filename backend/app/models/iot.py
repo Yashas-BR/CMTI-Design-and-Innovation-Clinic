@@ -1,6 +1,6 @@
 """Core IoT and operations models used by MQTT ingestion and telemetry queries."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -31,10 +31,13 @@ class User(Base, TimestampMixin):
     org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     auth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     auth_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Role(Base):
@@ -45,6 +48,8 @@ class Role(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     key: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class UserRole(Base):
@@ -55,6 +60,12 @@ class UserRole(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
+    assigned_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
 
 
 class AlertRule(Base, TimestampMixin):
@@ -76,9 +87,24 @@ class Bin(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     bin_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    address_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    area_id: Mapped[int | None] = mapped_column(ForeignKey("service_areas.id", ondelete="SET NULL"), nullable=True)
+    depot_id: Mapped[int | None] = mapped_column(ForeignKey("depots.id", ondelete="SET NULL"), nullable=True)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    capacity_liters: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    bin_height_cm: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+    dead_zone_cm: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     threshold_green: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     threshold_yellow: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    distance_factor: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_service_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class BinDevice(Base, TimestampMixin):
@@ -90,8 +116,26 @@ class BinDevice(Base, TimestampMixin):
     bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id", ondelete="CASCADE"), nullable=False)
     device_uid: Mapped[str] = mapped_column(String(100), nullable=False)
     mqtt_client_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    firmware_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    hardware_revision: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decommissioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BinDeviceHistory(Base):
+    """Assignment history of devices to bins."""
+
+    __tablename__ = "bin_device_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id", ondelete="CASCADE"), nullable=False)
+    device_id: Mapped[int] = mapped_column(ForeignKey("bin_devices.id", ondelete="CASCADE"), nullable=False)
+    active_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    active_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class MqttRawMessage(Base):
