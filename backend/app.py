@@ -39,8 +39,21 @@ DEFAULT_BIN_REGISTRY: List[Dict[str, Any]] = [
     {"bin_id": "B5", "ward": "Ward-E", "latitude": 12.9752, "longitude": 77.5931, "location": "South Junction"},
 ]
 
+DEFAULT_COLLECTION_CENTERS: List[Dict[str, Any]] = [
+    {
+        "center_id": "C1",
+        "name": "Central Collection Hub",
+        "ward": "Ward-A",
+        "latitude": 12.9719,
+        "longitude": 77.5938,
+        "address": "Municipal Service Yard, Central Ward",
+    }
+]
+
 BIN_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "bin_registry.json")
 BIN_REGISTRY: List[Dict[str, Any]] = []
+COLLECTION_CENTERS_FILE = os.path.join(os.path.dirname(__file__), "collection_centers.json")
+COLLECTION_CENTERS: List[Dict[str, Any]] = []
 
 DRIVER_ASSIGNMENTS = {
     "driverA": ["B1", "B2", "B3"],
@@ -97,10 +110,23 @@ def get_bin_definition(bin_id: str) -> Dict[str, Any] | None:
     return None
 
 
+def get_collection_center(center_id: str) -> Dict[str, Any] | None:
+    for center in COLLECTION_CENTERS:
+        if center["center_id"] == center_id:
+            return center
+    return None
+
+
 def save_bin_registry() -> None:
     """Persist current bin registry to disk."""
     with open(BIN_REGISTRY_FILE, "w", encoding="utf-8") as file_handle:
         json.dump(BIN_REGISTRY, file_handle, indent=2)
+
+
+def save_collection_centers() -> None:
+    """Persist current collection center list to disk."""
+    with open(COLLECTION_CENTERS_FILE, "w", encoding="utf-8") as file_handle:
+        json.dump(COLLECTION_CENTERS, file_handle, indent=2)
 
 
 def load_bin_registry() -> List[Dict[str, Any]]:
@@ -138,9 +164,49 @@ def load_bin_registry() -> List[Dict[str, Any]]:
     return normalized if normalized else [dict(item) for item in DEFAULT_BIN_REGISTRY]
 
 
+def load_collection_centers() -> List[Dict[str, Any]]:
+    """Load collection centers from disk, falling back to defaults."""
+    if not os.path.exists(COLLECTION_CENTERS_FILE):
+        return [dict(item) for item in DEFAULT_COLLECTION_CENTERS]
+
+    try:
+        with open(COLLECTION_CENTERS_FILE, "r", encoding="utf-8") as file_handle:
+            loaded = json.load(file_handle)
+    except (json.JSONDecodeError, OSError):
+        return [dict(item) for item in DEFAULT_COLLECTION_CENTERS]
+
+    if not isinstance(loaded, list):
+        return [dict(item) for item in DEFAULT_COLLECTION_CENTERS]
+
+    normalized: List[Dict[str, Any]] = []
+    for item in loaded:
+        if not isinstance(item, dict):
+            continue
+
+        try:
+            normalized.append(
+                {
+                    "center_id": str(item["center_id"]),
+                    "name": str(item["name"]),
+                    "ward": str(item["ward"]),
+                    "latitude": float(item["latitude"]),
+                    "longitude": float(item["longitude"]),
+                    "address": str(item.get("address", "")).strip(),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    return normalized if normalized else [dict(item) for item in DEFAULT_COLLECTION_CENTERS]
+
+
 BIN_REGISTRY = load_bin_registry()
 if not os.path.exists(BIN_REGISTRY_FILE):
     save_bin_registry()
+
+COLLECTION_CENTERS = load_collection_centers()
+if not os.path.exists(COLLECTION_CENTERS_FILE):
+    save_collection_centers()
 
 
 def next_bin_id() -> str:
@@ -150,6 +216,15 @@ def next_bin_id() -> str:
         if bin_id.startswith("B") and bin_id[1:].isdigit():
             max_index = max(max_index, int(bin_id[1:]))
     return f"B{max_index + 1}"
+
+
+def next_collection_center_id() -> str:
+    max_index = 0
+    for center in COLLECTION_CENTERS:
+        center_id = str(center["center_id"])
+        if center_id.startswith("C") and center_id[1:].isdigit():
+            max_index = max(max_index, int(center_id[1:]))
+    return f"C{max_index + 1}"
 
 
 def create_app_token(username: str, role: str) -> str:
@@ -349,6 +424,21 @@ def serialize_bin(bin_definition: Dict[str, Any]) -> Dict[str, Any]:
         "Latitude": bin_definition["latitude"],
         "Longitude": bin_definition["longitude"],
         "Location": bin_definition["location"],
+    }
+
+
+def collection_centers_to_rows() -> List[Dict[str, Any]]:
+    return [serialize_collection_center(center) for center in COLLECTION_CENTERS]
+
+
+def serialize_collection_center(center: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "Center_ID": center["center_id"],
+        "Name": center["name"],
+        "Ward": center["ward"],
+        "Latitude": center["latitude"],
+        "Longitude": center["longitude"],
+        "Address": center["address"],
     }
 
 
@@ -759,6 +849,139 @@ def manage_single_bin(bin_id: str) -> Tuple[Dict[str, Any], int]:
     save_bin_registry()
 
     return {"message": "Bin updated successfully", "bin": serialize_bin(bin_definition)}, 200
+
+
+@app.route("/api/dashboard/collection-centers", methods=["GET", "POST"])
+def manage_collection_centers() -> Tuple[Dict[str, Any], int]:
+    """List collection centers or add a new collection center for authority users."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Unauthenticated"}, 401
+
+    token = auth_header[7:]
+    try:
+        payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}, 401
+
+    role = payload.get("role", "")
+    if request.method == "GET":
+        return {"centers": collection_centers_to_rows()}, 200
+
+    if role != "Authority":
+        return {"error": "Unauthorized"}, 403
+
+    data = request.get_json() or {}
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+
+    try:
+        latitude_value = float(latitude)
+        longitude_value = float(longitude)
+    except (TypeError, ValueError):
+        return {"error": "Valid latitude and longitude are required"}, 400
+
+    if not (-90 <= latitude_value <= 90 and -180 <= longitude_value <= 180):
+        return {"error": "Coordinates are out of range"}, 400
+
+    center_id = str(data.get("center_id", "")).strip() or next_collection_center_id()
+    if get_collection_center(center_id) is not None:
+        return {"error": "Collection center ID already exists"}, 409
+
+    name = str(data.get("name", "")).strip()
+    ward = str(data.get("ward", "")).strip()
+    address = str(data.get("address", "")).strip()
+
+    if not name:
+        return {"error": "Center name is required"}, 400
+    if not ward:
+        return {"error": "Ward is required"}, 400
+
+    COLLECTION_CENTERS.append(
+        {
+            "center_id": center_id,
+            "name": name,
+            "ward": ward,
+            "latitude": latitude_value,
+            "longitude": longitude_value,
+            "address": address,
+        }
+    )
+    save_collection_centers()
+
+    return {
+        "message": "Collection center added successfully",
+        "center": serialize_collection_center(COLLECTION_CENTERS[-1]),
+    }, 201
+
+
+@app.route("/api/dashboard/collection-centers/<center_id>", methods=["PUT", "DELETE"])
+def manage_single_collection_center(center_id: str) -> Tuple[Dict[str, Any], int]:
+    """Update or delete a collection center for authority users."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Unauthenticated"}, 401
+
+    token = auth_header[7:]
+    try:
+        payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}, 401
+
+    role = payload.get("role", "")
+    if role != "Authority":
+        return {"error": "Unauthorized"}, 403
+
+    center = get_collection_center(center_id)
+    if center is None:
+        return {"error": "Collection center not found"}, 404
+
+    if request.method == "DELETE":
+        COLLECTION_CENTERS.remove(center)
+        save_collection_centers()
+        return {"message": "Collection center deleted successfully", "center_id": center_id}, 200
+
+    data = request.get_json() or {}
+
+    if "name" in data:
+        name_value = str(data.get("name", "")).strip()
+        if not name_value:
+            return {"error": "Center name cannot be empty"}, 400
+        center["name"] = name_value
+
+    if "ward" in data:
+        ward_value = str(data.get("ward", "")).strip()
+        if not ward_value:
+            return {"error": "Ward cannot be empty"}, 400
+        center["ward"] = ward_value
+
+    if "address" in data:
+        center["address"] = str(data.get("address", "")).strip()
+
+    if "latitude" in data:
+        try:
+            latitude_value = float(data["latitude"])
+        except (TypeError, ValueError):
+            return {"error": "Valid latitude is required"}, 400
+        if not (-90 <= latitude_value <= 90):
+            return {"error": "Latitude is out of range"}, 400
+        center["latitude"] = latitude_value
+
+    if "longitude" in data:
+        try:
+            longitude_value = float(data["longitude"])
+        except (TypeError, ValueError):
+            return {"error": "Valid longitude is required"}, 400
+        if not (-180 <= longitude_value <= 180):
+            return {"error": "Longitude is out of range"}, 400
+        center["longitude"] = longitude_value
+
+    save_collection_centers()
+
+    return {
+        "message": "Collection center updated successfully",
+        "center": serialize_collection_center(center),
+    }, 200
 
 
 @app.route("/health", methods=["GET"])

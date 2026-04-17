@@ -1,0 +1,18 @@
+[
+  {
+    "center_id": "C1",
+    "name": "Central Collection Hub",
+    "ward": "Ward-A",
+    "latitude": 12.9719,
+    "longitude": 77.5938,
+    "address": "Municipal Service Yard, Central Ward"
+  },
+  {
+    "center_id": "Collection-01",
+    "name": "Yeshwanthpur waste collection",
+    "ward": "Yeshwanthpur",
+    "latitude": 13.026516,
+    "longitude": 77.551207,
+    "address": "Beside railway station"
+  }
+]

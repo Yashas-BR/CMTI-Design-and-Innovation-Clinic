@@ -3,7 +3,6 @@ import {
   CircleMarker,
   MapContainer,
   Polyline,
-  Popup,
   TileLayer,
   Tooltip,
   useMap,
@@ -11,10 +10,11 @@ import {
 } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { DataRow, RouteStop } from '@/types/dashboard'
+import type { CollectionCenter, DataRow, RouteStop } from '@/types/dashboard'
 
 type BinMapProps = {
   rows: DataRow[]
+  collectionCenters?: CollectionCenter[]
   routeStops?: RouteStop[]
   title?: string
   heightClassName?: string
@@ -87,13 +87,14 @@ function MapResizeHandler() {
 
 function fillColor(status: string) {
   const value = status.toLowerCase()
-  if (value.includes('low')) return '#34d399'
-  if (value.includes('medium')) return '#fbbf24'
-  return '#f87171'
+  if (value.includes('low')) return '#22c55e'
+  if (value.includes('medium')) return '#facc15'
+  return '#fb923c'
 }
 
 function BinMap({
   rows,
+  collectionCenters,
   routeStops,
   title = 'Dustbin Map View',
   heightClassName = 'h-[440px]',
@@ -123,9 +124,23 @@ function BinMap({
       .filter(([lat, lng]) => lat !== 0 && lng !== 0)
   }, [routeStops])
 
+  const centerPoints = useMemo(() => {
+    return (collectionCenters ?? [])
+      .map((center) => ({
+        centerId: String(center.Center_ID ?? ''),
+        name: String(center.Name ?? 'Collection Center'),
+        ward: String(center.Ward ?? 'Unknown ward'),
+        address: String(center.Address ?? ''),
+        latitude: Number(center.Latitude ?? 0),
+        longitude: Number(center.Longitude ?? 0),
+      }))
+      .filter((center) => center.latitude !== 0 && center.longitude !== 0)
+  }, [collectionCenters])
+
   const center: [number, number] = points.length > 0 ? [points[0].latitude, points[0].longitude] : [12.9716, 77.5946]
 
   const bounds = points.map((point) => [point.latitude, point.longitude] as [number, number])
+  const centerBounds = centerPoints.map((centerPoint) => [centerPoint.latitude, centerPoint.longitude] as [number, number])
 
   return (
     <Card className="border-white/70 bg-white/80 shadow-sm">
@@ -140,7 +155,7 @@ function BinMap({
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            {bounds.length > 0 ? <MapBounds points={bounds} /> : null}
+            {bounds.length > 0 || centerBounds.length > 0 ? <MapBounds points={[...bounds, ...centerBounds]} /> : null}
             {onMapClick ? <MapClickHandler onMapClick={onMapClick} /> : null}
 
             {routePath.length > 1 ? (
@@ -159,19 +174,37 @@ function BinMap({
                   weight: 2,
                 }}
               >
-                <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent>
-                  <span className="text-xs font-semibold text-slate-800">{point.binId}</span>
-                </Tooltip>
-                <Popup>
-                  <div className="space-y-1 text-sm">
-                    <p className="font-semibold text-slate-900">{point.binId}</p>
+                <Tooltip direction="top" offset={[0, -8]} opacity={1} permanent={false}>
+                  <div className="space-y-0.5 text-xs text-slate-800">
+                    <p className="font-semibold">{point.binId}</p>
                     <p>{point.location}</p>
-                    <p>{point.ward}</p>
-                    <p>Status: {point.status}</p>
                     <p>Fill: {point.fill.toFixed(1)}%</p>
-                    <p>Priority: {point.priority.toFixed(2)}</p>
+                    <p>Status: {point.status}</p>
                   </div>
-                </Popup>
+                </Tooltip>
+              </CircleMarker>
+            ))}
+
+            {centerPoints.map((centerPoint) => (
+              <CircleMarker
+                key={centerPoint.centerId}
+                center={[centerPoint.latitude, centerPoint.longitude]}
+                radius={13}
+                pathOptions={{
+                  color: '#7c3aed',
+                  fillColor: '#8b5cf6',
+                  fillOpacity: 0.55,
+                  weight: 2,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -8]} opacity={1} permanent={false}>
+                  <div className="space-y-0.5 text-xs text-slate-800">
+                    <p className="font-semibold">{centerPoint.centerId}</p>
+                    <p>{centerPoint.name}</p>
+                    <p>{centerPoint.address || 'No address provided'}</p>
+                    <p>Fill: N/A (Collection Center)</p>
+                  </div>
+                </Tooltip>
               </CircleMarker>
             ))}
 

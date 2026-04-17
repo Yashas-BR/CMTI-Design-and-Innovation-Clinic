@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
-import { Download, LogOut, MapPinned, Pencil, Plus, RefreshCw, Route, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Download, LogOut, MapPinned, Plus, RefreshCw, Route, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import {
@@ -43,6 +43,7 @@ import FillChart from '@/components/FillChart'
 import MetricsRow from '@/components/MetricsRow'
 import type {
   BinDefinition,
+  CollectionCenter,
   DashboardControls,
   DashboardData,
   DashboardTab,
@@ -58,14 +59,17 @@ type BinFormState = {
   longitude: string
 }
 
-type EditBinFormState = {
+type BinActionTab = 'add' | 'delete'
+type CenterActionTab = 'add' | 'delete'
+
+type CenterFormState = {
+  center_id: string
+  name: string
   ward: string
-  location: string
+  address: string
   latitude: string
   longitude: string
 }
-
-type BinActionTab = 'add' | 'delete'
 
 type DashboardPageProps = {
   user: {
@@ -86,21 +90,26 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
   const [priority, setPriority] = useState<PriorityData | null>(null)
   const [route, setRoute] = useState<RouteData | null>(null)
   const [bins, setBins] = useState<BinDefinition[]>([])
-  const [binsLoading, setBinsLoading] = useState(false)
+  const [collectionCenters, setCollectionCenters] = useState<CollectionCenter[]>([])
+  const [, setBinsLoading] = useState(false)
+  const [, setCentersLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [binDialogOpen, setBinDialogOpen] = useState(false)
+  const [centerDialogOpen, setCenterDialogOpen] = useState(false)
   const [binActionTab, setBinActionTab] = useState<BinActionTab>('add')
+  const [centerActionTab, setCenterActionTab] = useState<CenterActionTab>('add')
   const [deleteCandidateBinId, setDeleteCandidateBinId] = useState('')
-  const [selectedWardFilter, setSelectedWardFilter] = useState('all')
-  const [binIdSearch, setBinIdSearch] = useState('')
-  const [editBinDialogOpen, setEditBinDialogOpen] = useState(false)
-  const [activeBinId, setActiveBinId] = useState<string | null>(null)
+  const [deleteCandidateCenterId, setDeleteCandidateCenterId] = useState('')
+  const [locationSearch, setLocationSearch] = useState('')
+  const [locationSortOrder, setLocationSortOrder] = useState<'asc' | 'desc'>('asc')
   const [binSubmitting, setBinSubmitting] = useState(false)
-  const [editSubmitting, setEditSubmitting] = useState(false)
   const [deleteBinId, setDeleteBinId] = useState<string | null>(null)
+  const [centerSubmitting, setCenterSubmitting] = useState(false)
+  const [deleteCenterId, setDeleteCenterId] = useState<string | null>(null)
   const [binError, setBinError] = useState('')
-  const [editError, setEditError] = useState('')
+  const [centerError, setCenterError] = useState('')
   const [selectedPoint, setSelectedPoint] = useState<[number, number] | null>(null)
+  const [centerSelectedPoint, setCenterSelectedPoint] = useState<[number, number] | null>(null)
   const [binForm, setBinForm] = useState<BinFormState>({
     bin_id: '',
     ward: 'Ward-New',
@@ -113,9 +122,11 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     base_fill_rate: 3,
     priority_threshold: 70,
   })
-  const [editBinForm, setEditBinForm] = useState<EditBinFormState>({
+  const [centerForm, setCenterForm] = useState<CenterFormState>({
+    center_id: '',
+    name: '',
     ward: '',
-    location: '',
+    address: '',
     latitude: '',
     longitude: '',
   })
@@ -195,6 +206,20 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
   }, [apiUrl, isAdmin, token])
 
+  const fetchCollectionCenters = useCallback(async () => {
+    setCentersLoading(true)
+    try {
+      const response = await axios.get<{ centers: CollectionCenter[] }>(`${apiUrl}/dashboard/collection-centers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setCollectionCenters(response.data.centers)
+    } catch {
+      setCollectionCenters([])
+    } finally {
+      setCentersLoading(false)
+    }
+  }, [apiUrl, token])
+
   useEffect(() => {
     void fetchSimulationControls()
     void fetchDashboardData()
@@ -205,12 +230,16 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
   }, [fetchBins])
 
   useEffect(() => {
+    void fetchCollectionCenters()
+  }, [fetchCollectionCenters])
+
+  useEffect(() => {
     if (!autoRefreshEnabled) {
       return
     }
 
     const intervalId = window.setInterval(() => {
-      if (binDialogOpen || editBinDialogOpen) {
+      if (binDialogOpen || centerDialogOpen) {
         return
       }
 
@@ -218,10 +247,19 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
       if (isAdmin) {
         void fetchBins()
       }
+      void fetchCollectionCenters()
     }, 20000)
 
     return () => window.clearInterval(intervalId)
-  }, [autoRefreshEnabled, binDialogOpen, editBinDialogOpen, fetchBins, fetchDashboardData, isAdmin])
+  }, [
+    autoRefreshEnabled,
+    binDialogOpen,
+    centerDialogOpen,
+    fetchBins,
+    fetchCollectionCenters,
+    fetchDashboardData,
+    isAdmin,
+  ])
 
   const resetBinForm = () => {
     setBinError('')
@@ -241,6 +279,14 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     setDeleteCandidateBinId('')
     setBinDialogOpen(true)
     void fetchBins()
+  }
+
+  const openCollectionCenterDialog = () => {
+    resetCenterForm()
+    setCenterActionTab('add')
+    setDeleteCandidateCenterId('')
+    setCenterDialogOpen(true)
+    void fetchCollectionCenters()
   }
 
   const handleApplyControls = async () => {
@@ -323,57 +369,6 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
   }
 
-  const openEditBinDialog = (bin: BinDefinition) => {
-    setActiveBinId(bin.Bin_ID)
-    setEditError('')
-    setEditBinForm({
-      ward: bin.Ward,
-      location: bin.Location,
-      latitude: `${bin.Latitude}`,
-      longitude: `${bin.Longitude}`,
-    })
-    setEditBinDialogOpen(true)
-  }
-
-  const handleEditBinFieldChange = (field: keyof EditBinFormState, value: string) => {
-    setEditBinForm((prev) => ({ ...prev, [field]: value }))
-  }
-
-  const handleUpdateBin = async () => {
-    if (!activeBinId) {
-      return
-    }
-
-    setEditSubmitting(true)
-    setEditError('')
-    try {
-      await axios.put(
-        `${apiUrl}/dashboard/bins/${encodeURIComponent(activeBinId)}`,
-        {
-          ward: editBinForm.ward.trim(),
-          location: editBinForm.location.trim(),
-          latitude: Number(editBinForm.latitude),
-          longitude: Number(editBinForm.longitude),
-        },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      )
-      setEditBinDialogOpen(false)
-      setActiveBinId(null)
-      await fetchDashboardData()
-      await fetchBins()
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        setEditError((error.response?.data as { error?: string })?.error ?? 'Failed to update bin')
-      } else {
-        setEditError('Failed to update bin')
-      }
-    } finally {
-      setEditSubmitting(false)
-    }
-  }
-
   const handleDeleteBin = async (binId: string, showConfirm = true) => {
     if (!binId) {
       return
@@ -401,20 +396,101 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
   }
 
-  const wardFilters = Array.from(new Set(bins.map((bin) => bin.Ward))).sort((left, right) =>
-    left.localeCompare(right),
-  )
+  const handleCenterFieldChange = (field: keyof CenterFormState, value: string) => {
+    setCenterForm((prev) => ({ ...prev, [field]: value }))
+  }
 
-  const normalizedBinIdSearch = binIdSearch.trim().toLowerCase()
+  const resetCenterForm = () => {
+    setCenterError('')
+    setCenterSelectedPoint(null)
+    setCenterForm({
+      center_id: '',
+      name: '',
+      ward: '',
+      address: '',
+      latitude: '',
+      longitude: '',
+    })
+  }
 
-  const filteredBins = bins.filter((bin) => {
-    const wardMatches = selectedWardFilter === 'all' || bin.Ward === selectedWardFilter
-    const idMatches =
-      normalizedBinIdSearch.length === 0 ||
-      bin.Bin_ID.toLowerCase().includes(normalizedBinIdSearch)
+  const handleAddCollectionCenter = async () => {
+    setCenterSubmitting(true)
+    setCenterError('')
 
-    return wardMatches && idMatches
-  })
+    try {
+      await axios.post(
+        `${apiUrl}/dashboard/collection-centers`,
+        {
+          center_id: centerForm.center_id.trim(),
+          name: centerForm.name.trim(),
+          ward: centerForm.ward.trim(),
+          address: centerForm.address.trim(),
+          latitude: Number(centerForm.latitude),
+          longitude: Number(centerForm.longitude),
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
+
+      resetCenterForm()
+      await fetchCollectionCenters()
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        setCenterError((error.response?.data as { error?: string })?.error ?? 'Failed to add collection center')
+      } else {
+        setCenterError('Failed to add collection center')
+      }
+    } finally {
+      setCenterSubmitting(false)
+    }
+  }
+
+  const handleCenterMapPick = (latitude: number, longitude: number) => {
+    setCenterSelectedPoint([latitude, longitude])
+    setCenterForm((prev) => ({
+      ...prev,
+      latitude: latitude.toFixed(6),
+      longitude: longitude.toFixed(6),
+    }))
+  }
+
+  const handleDeleteCollectionCenter = async (centerId: string, showConfirm = true) => {
+    if (!centerId) {
+      return
+    }
+
+    if (showConfirm) {
+      const confirmed = window.confirm(`Delete collection center ${centerId}? This cannot be undone.`)
+      if (!confirmed) {
+        return
+      }
+    }
+
+    setDeleteCenterId(centerId)
+    try {
+      await axios.delete(`${apiUrl}/dashboard/collection-centers/${encodeURIComponent(centerId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      await fetchCollectionCenters()
+    } catch {
+      setCenterError('Failed to delete collection center')
+    } finally {
+      setDeleteCenterId(null)
+    }
+  }
+
+  const normalizedLocationSearch = locationSearch.trim().toLowerCase()
+
+  const registryRows = [...(data?.rows ?? [])]
+    .filter((row) => String(row.Location ?? '').toLowerCase().includes(normalizedLocationSearch))
+    .sort((left, right) => {
+      const leftLocation = String(left.Location ?? '')
+      const rightLocation = String(right.Location ?? '')
+      return locationSortOrder === 'asc'
+        ? leftLocation.localeCompare(rightLocation)
+        : rightLocation.localeCompare(leftLocation)
+    })
 
   const updateControl = (key: keyof DashboardControls, value: number) => {
     if (Number.isNaN(value)) {
@@ -462,6 +538,12 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                 <Button variant="outline" onClick={openAddBinDialog}>
                   <Plus className="mr-1 h-4 w-4" />
                   Update Bin
+                </Button>
+              ) : null}
+              {isAdmin ? (
+                <Button variant="outline" onClick={openCollectionCenterDialog}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  Update Collection Center
                 </Button>
               ) : null}
               <Button variant="outline" onClick={onLogout}>
@@ -630,77 +712,163 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
 
         {isAdmin ? (
           <Dialog
-            open={editBinDialogOpen}
+            open={centerDialogOpen}
             onOpenChange={(open) => {
-              setEditBinDialogOpen(open)
+              setCenterDialogOpen(open)
               if (!open) {
-                setActiveBinId(null)
-                setEditError('')
+                resetCenterForm()
+                setDeleteCandidateCenterId('')
               }
             }}
           >
-            <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+            <DialogContent className="h-[90vh] w-[96vw] max-w-[calc(100vw-1.5rem)] overflow-y-auto sm:w-[95vw] sm:!max-w-[1300px]">
               <DialogHeader>
-                <DialogTitle>Edit bin {activeBinId ?? ''}</DialogTitle>
+                <DialogTitle>Update Collection Centers</DialogTitle>
                 <DialogDescription>
-                  Update the location label and coordinates for this dustbin.
+                  Manage collection centers from one place with separate add and delete actions.
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-ward">Ward</Label>
-                  <Input
-                    id="edit-ward"
-                    value={editBinForm.ward}
-                    onChange={(event) => handleEditBinFieldChange('ward', event.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-location">Location label</Label>
-                  <Input
-                    id="edit-location"
-                    value={editBinForm.location}
-                    onChange={(event) => handleEditBinFieldChange('location', event.target.value)}
-                  />
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-latitude">Latitude</Label>
-                    <Input
-                      id="edit-latitude"
-                      type="number"
-                      step="0.000001"
-                      value={editBinForm.latitude}
-                      onChange={(event) => handleEditBinFieldChange('latitude', event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-longitude">Longitude</Label>
-                    <Input
-                      id="edit-longitude"
-                      type="number"
-                      step="0.000001"
-                      value={editBinForm.longitude}
-                      onChange={(event) => handleEditBinFieldChange('longitude', event.target.value)}
-                    />
-                  </div>
-                </div>
-                {editError ? (
-                  <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {editError}
-                  </p>
-                ) : null}
-              </div>
+              <UiTabs value={centerActionTab} onValueChange={(value) => setCenterActionTab(value as CenterActionTab)}>
+                <UiTabsList className="grid w-full grid-cols-2">
+                  <UiTabsTrigger value="add">Add Center</UiTabsTrigger>
+                  <UiTabsTrigger value="delete">Delete Center</UiTabsTrigger>
+                </UiTabsList>
 
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setEditBinDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleUpdateBin} disabled={editSubmitting || !activeBinId}>
-                  {editSubmitting ? 'Saving...' : 'Save changes'}
-                </Button>
-              </DialogFooter>
+                <UiTabsContent value="add" className="mt-5 space-y-5">
+                  <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+                    <div className="space-y-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="center-id">Center ID</Label>
+                          <Input
+                            id="center-id"
+                            value={centerForm.center_id}
+                            onChange={(event) => handleCenterFieldChange('center_id', event.target.value)}
+                            placeholder="Optional, auto-generates"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="center-name">Center Name</Label>
+                          <Input
+                            id="center-name"
+                            value={centerForm.name}
+                            onChange={(event) => handleCenterFieldChange('name', event.target.value)}
+                            placeholder="Collection hub name"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="center-ward">Ward</Label>
+                          <Input
+                            id="center-ward"
+                            value={centerForm.ward}
+                            onChange={(event) => handleCenterFieldChange('ward', event.target.value)}
+                            placeholder="Ward name"
+                          />
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor="center-address">Address</Label>
+                          <Input
+                            id="center-address"
+                            value={centerForm.address}
+                            onChange={(event) => handleCenterFieldChange('address', event.target.value)}
+                            placeholder="Street, landmark"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="center-latitude">Latitude</Label>
+                          <Input
+                            id="center-latitude"
+                            type="number"
+                            step="0.000001"
+                            value={centerForm.latitude}
+                            onChange={(event) => handleCenterFieldChange('latitude', event.target.value)}
+                            placeholder="12.971900"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="center-longitude">Longitude</Label>
+                          <Input
+                            id="center-longitude"
+                            type="number"
+                            step="0.000001"
+                            value={centerForm.longitude}
+                            onChange={(event) => handleCenterFieldChange('longitude', event.target.value)}
+                            placeholder="77.593800"
+                          />
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-muted-foreground">
+                        Selected coordinate:
+                        {centerSelectedPoint
+                          ? ` ${centerSelectedPoint[0].toFixed(6)}, ${centerSelectedPoint[1].toFixed(6)}`
+                          : ' click the map to set it.'}
+                      </p>
+                    </div>
+
+                    <BinMap
+                      rows={data?.rows ?? []}
+                      collectionCenters={collectionCenters}
+                      title="Click the map to place a collection center"
+                      heightClassName="h-[360px] sm:h-[460px]"
+                      onMapClick={handleCenterMapPick}
+                      selectedPoint={centerSelectedPoint}
+                    />
+                  </div>
+
+                  {centerError ? (
+                    <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {centerError}
+                    </p>
+                  ) : null}
+
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setCenterDialogOpen(false)}>
+                      Close
+                    </Button>
+                    <Button onClick={handleAddCollectionCenter} disabled={centerSubmitting}>
+                      <MapPinned className="mr-1 h-4 w-4" />
+                      {centerSubmitting ? 'Saving...' : 'Save center'}
+                    </Button>
+                  </DialogFooter>
+                </UiTabsContent>
+
+                <UiTabsContent value="delete" className="mt-5 space-y-5">
+                  <div className="space-y-3">
+                    <Label htmlFor="delete-center">Select collection center to delete</Label>
+                    <Select value={deleteCandidateCenterId} onValueChange={setDeleteCandidateCenterId}>
+                      <SelectTrigger id="delete-center">
+                        <SelectValue placeholder="Choose a collection center" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {collectionCenters.map((center) => (
+                          <SelectItem key={`delete-center-${center.Center_ID}`} value={center.Center_ID}>
+                            {center.Center_ID} - {center.Name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      Deleting a collection center permanently removes it from the registry.
+                    </p>
+                  </div>
+
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setCenterDialogOpen(false)}>
+                      Close
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => void handleDeleteCollectionCenter(deleteCandidateCenterId, true)}
+                      disabled={!deleteCandidateCenterId || deleteCenterId === deleteCandidateCenterId}
+                    >
+                      <Trash2 className="mr-1 h-4 w-4" />
+                      {deleteCenterId === deleteCandidateCenterId ? 'Deleting...' : 'Delete selected center'}
+                    </Button>
+                  </DialogFooter>
+                </UiTabsContent>
+              </UiTabs>
             </DialogContent>
           </Dialog>
         ) : null}
@@ -814,109 +982,53 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                   monitoring={(
                     <>
                       <h2 className="text-lg font-semibold">Live Bin Monitoring</h2>
-                      <BinMap rows={data.rows} title="Dustbin Locations & Fill Status" />
+                      <BinMap rows={data.rows} collectionCenters={collectionCenters} title="Dustbin Locations & Fill Status" />
                       {isAdmin ? (
                         <Card className="border-white/70 bg-white/75 shadow-sm">
                           <CardHeader>
-                            <CardTitle>Bin Registry Management</CardTitle>
+                            <CardTitle className="flex items-center justify-between gap-3">
+                              <span>Bin Registry Management</span>
+                              <Button variant="outline" onClick={openCollectionCenterDialog}>
+                                <Plus className="mr-1 h-4 w-4" />
+                                Update Collection Center
+                              </Button>
+                            </CardTitle>
                             <CardDescription>
-                              Full registry with ward filter, plus edit and delete actions.
+                              Detailed registry view for management. Search and sort by location here.
                             </CardDescription>
                           </CardHeader>
                           <CardContent className="space-y-5">
                             <div className="grid gap-3 md:grid-cols-2">
                               <div className="grid gap-3 sm:max-w-xs">
-                                <Label htmlFor="ward-filter">Filter by ward</Label>
-                                <Select value={selectedWardFilter} onValueChange={setSelectedWardFilter}>
-                                  <SelectTrigger id="ward-filter">
-                                    <SelectValue placeholder="Select ward" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="all">All wards</SelectItem>
-                                    {wardFilters.map((ward) => (
-                                      <SelectItem key={`ward-filter-${ward}`} value={ward}>
-                                        {ward}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Label htmlFor="location-search">Search by Location</Label>
+                                <Input
+                                  id="location-search"
+                                  value={locationSearch}
+                                  onChange={(event) => setLocationSearch(event.target.value)}
+                                  placeholder="e.g. Central Ward"
+                                />
                               </div>
 
                               <div className="grid gap-3 sm:max-w-xs">
-                                <Label htmlFor="bin-id-filter">Search by Bin ID</Label>
-                                <Input
-                                  id="bin-id-filter"
-                                  value={binIdSearch}
-                                  onChange={(event) => setBinIdSearch(event.target.value)}
-                                  placeholder="e.g. B12"
-                                />
+                                <Label htmlFor="location-sort">Sort by Location</Label>
+                                <Select value={locationSortOrder} onValueChange={(value) => setLocationSortOrder(value as 'asc' | 'desc')}>
+                                  <SelectTrigger id="location-sort">
+                                    <SelectValue placeholder="Sort order" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="asc">A to Z</SelectItem>
+                                    <SelectItem value="desc">Z to A</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </div>
 
-                            <div className="max-h-[332px] overflow-auto rounded-xl border">
-                              <Table>
-                                <TableHeader className="sticky top-0 z-10 bg-white/95 backdrop-blur">
-                                  <TableRow>
-                                    <TableHead>Bin ID</TableHead>
-                                    <TableHead>Ward</TableHead>
-                                    <TableHead>Location</TableHead>
-                                    <TableHead>Latitude</TableHead>
-                                    <TableHead>Longitude</TableHead>
-                                    <TableHead>Actions</TableHead>
-                                  </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                  {binsLoading ? (
-                                    <TableRow>
-                                      <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                        Loading bins...
-                                      </TableCell>
-                                    </TableRow>
-                                  ) : filteredBins.length === 0 ? (
-                                    <TableRow>
-                                      <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                        No bins found for the selected filters.
-                                      </TableCell>
-                                    </TableRow>
-                                  ) : (
-                                    filteredBins.map((bin) => (
-                                      <TableRow key={bin.Bin_ID} className="h-14">
-                                        <TableCell className="font-medium">{bin.Bin_ID}</TableCell>
-                                        <TableCell>{bin.Ward}</TableCell>
-                                        <TableCell>{bin.Location}</TableCell>
-                                        <TableCell>{bin.Latitude.toFixed(6)}</TableCell>
-                                        <TableCell>{bin.Longitude.toFixed(6)}</TableCell>
-                                        <TableCell>
-                                          <div className="flex gap-2">
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              onClick={() => openEditBinDialog(bin)}
-                                            >
-                                              <Pencil className="mr-1 h-3.5 w-3.5" />
-                                              Edit
-                                            </Button>
-                                            <Button
-                                              size="sm"
-                                              variant="destructive"
-                                              onClick={() => handleDeleteBin(bin.Bin_ID)}
-                                              disabled={deleteBinId === bin.Bin_ID}
-                                            >
-                                              <Trash2 className="mr-1 h-3.5 w-3.5" />
-                                              {deleteBinId === bin.Bin_ID ? 'Deleting...' : 'Delete'}
-                                            </Button>
-                                          </div>
-                                        </TableCell>
-                                      </TableRow>
-                                    ))
-                                  )}
-                                </TableBody>
-                              </Table>
-                            </div>
+                            <DataTable rows={registryRows} emptyMessage="No bins found for the selected filters." />
                           </CardContent>
                         </Card>
-                      ) : null}
-                      <DataTable rows={data.rows} emptyMessage="No monitoring data available." />
+                      ) : (
+                        <DataTable rows={data.rows} emptyMessage="No monitoring data available." />
+                      )}
                       <FillChart rows={data.rows} />
                     </>
                   )}

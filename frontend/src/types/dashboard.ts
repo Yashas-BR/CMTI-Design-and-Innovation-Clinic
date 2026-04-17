@@ -46,3 +46,12 @@ export type BinDefinition = {
   Longitude: number
   Location: string
 }
+
+export type CollectionCenter = {
+  Center_ID: string
+  Name: string
+  Ward: string
+  Latitude: number
+  Longitude: number
+  Address: string
+}
