@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import logging
 from typing import Any
 
 from sqlalchemy import Select, select
@@ -21,11 +22,15 @@ from app.models.iot import (
     MqttRawMessage,
 )
 from app.schemas.mqtt import MQTTIngestRequest
+from app.services.bin_state_realtime import broadcast_bin_current_state_update
+from app.services.notifications import dispatch_alert_opened
 
 
 ALERT_GREEN = "GREEN"
 ALERT_YELLOW = "YELLOW"
 ALERT_RED = "RED"
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _now_utc() -> datetime:
@@ -154,6 +159,7 @@ async def _open_or_update_alert(
     description: str,
     latest_telemetry_id: int | None,
     dedupe_key: str,
+    pending_dispatches: list[dict[str, str]] | None = None,
 ) -> str:
     open_alert = await _get_open_alert(db, bin_obj.id, alert_type)
     now = _now_utc()
@@ -179,6 +185,19 @@ async def _open_or_update_alert(
         db.add(created)
         await db.flush()
         await _append_alert_event(db, created.id, "opened", description)
+
+        if pending_dispatches is not None:
+            pending_dispatches.append(
+                {
+                    "org_id": str(bin_obj.org_id),
+                    "bin_code": bin_obj.bin_code,
+                    "alert_type": alert_type,
+                    "severity": severity,
+                    "title": title,
+                    "description": description,
+                }
+            )
+
         return "opened"
 
     open_alert.severity = severity
@@ -301,6 +320,8 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
         "telemetry_id": None,
         "evaluation": {},
     }
+    pending_alert_dispatches: list[dict[str, str]] = []
+    current_state_changed = False
 
     if channel == "data":
         measured_at, payload_ts_raw, payload_ts_type = _parse_payload_time(payload.get("ts"), received_at)
@@ -347,6 +368,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
             queued=queued,
             connectivity_state=None,
         )
+        current_state_changed = True
 
         threshold_state = "none"
         overflow_state = "none"
@@ -361,6 +383,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
                 description=f"Fill level alert {alert_level} at {fill_pct}%.",
                 latest_telemetry_id=telemetry.id,
                 dedupe_key=f"{bin_obj.org_id}:{bin_obj.id}:fill_threshold",
+                pending_dispatches=pending_alert_dispatches,
             )
         elif alert_level == ALERT_GREEN:
             threshold_state = await _resolve_alert(
@@ -380,6 +403,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
                 description=f"Predicted time-to-full is {ttf_min} minutes.",
                 latest_telemetry_id=telemetry.id,
                 dedupe_key=f"{bin_obj.org_id}:{bin_obj.id}:overflow_imminent",
+                pending_dispatches=pending_alert_dispatches,
             )
         else:
             overflow_state = await _resolve_alert(
@@ -427,6 +451,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
                 queued=None,
                 connectivity_state=status,
             )
+            current_state_changed = True
 
             offline_state = "none"
             if status == "offline":
@@ -439,6 +464,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
                     description="MQTT device reported offline status.",
                     latest_telemetry_id=None,
                     dedupe_key=f"{bin_obj.org_id}:{bin_obj.id}:device_offline",
+                    pending_dispatches=pending_alert_dispatches,
                 )
             else:
                 offline_state = await _resolve_alert(
@@ -470,6 +496,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
                 queued=None,
                 connectivity_state=None,
             )
+            current_state_changed = True
 
             threshold_state = "none"
             if alert_level in {ALERT_YELLOW, ALERT_RED}:
@@ -482,6 +509,7 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
                     description=f"Alert topic reported {alert_level}.",
                     latest_telemetry_id=None,
                     dedupe_key=f"{bin_obj.org_id}:{bin_obj.id}:fill_threshold",
+                    pending_dispatches=pending_alert_dispatches,
                 )
             else:
                 threshold_state = await _resolve_alert(
@@ -507,5 +535,22 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
 
     raw.processed_at = _now_utc()
     await db.commit()
+
+    if current_state_changed:
+        await broadcast_bin_current_state_update(db, bin_id=bin_obj.id)
+
+    for pending in pending_alert_dispatches:
+        try:
+            await dispatch_alert_opened(
+                db,
+                org_id=int(pending["org_id"]),
+                bin_code=pending["bin_code"],
+                alert_type=pending["alert_type"],
+                severity=pending["severity"],
+                title=pending["title"],
+                description=pending["description"],
+            )
+        except Exception:
+            LOGGER.exception("Failed to dispatch alert notification")
 
     return result

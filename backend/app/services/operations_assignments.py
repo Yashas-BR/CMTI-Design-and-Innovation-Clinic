@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.iot import Route, RouteAssignment, Vehicle
+from app.services.notifications import dispatch_route_assignment_created
 from app.services.operations_audit import append_audit_log
 from app.services.operations_common import ASSIGNMENT_TRANSITIONS, ensure_user_belongs_to_org, validate_transition
 
@@ -134,6 +135,16 @@ async def create_route_assignment(
 
     await db.commit()
     await db.refresh(assignment)
+
+    await dispatch_route_assignment_created(
+        db,
+        org_id=org_id,
+        route_id=route.id,
+        route_code=route.route_code,
+        driver_user_id=driver_user_id,
+        vehicle_id=vehicle_id,
+    )
+
     return _assignment_to_dict(assignment)
 
 

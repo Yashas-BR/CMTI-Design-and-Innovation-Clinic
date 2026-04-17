@@ -53,6 +53,33 @@ class Settings(BaseSettings):
     mqtt_use_tls: bool = True
     mqtt_allow_insecure_tls: bool = True
     mqtt_client_id_prefix: str = "smart_waste_backend"
+    mqtt_ingest_api_key: str = "change-this-mqtt-ingest-api-key"
+
+    # IoT retention worker
+    telemetry_retention_enabled: bool = False
+    telemetry_retention_interval_seconds: int = 3600
+    mqtt_raw_retention_days: int = 30
+    bin_telemetry_retention_days: int = 180
+
+    # Notification dispatcher
+    notifications_enabled: bool = False
+    notification_in_app_enabled: bool = True
+    notification_email_enabled: bool = False
+    notification_email_from: str = "noreply@smartwaste.local"
+    notification_email_smtp_host: str = ""
+    notification_email_smtp_port: int = 587
+    notification_email_smtp_use_tls: bool = True
+    notification_email_smtp_use_ssl: bool = False
+    notification_email_smtp_username: str = ""
+    notification_email_smtp_password: str = ""
+    notification_email_timeout_seconds: float = 10.0
+    notification_email_recipient_fallback: List[str] = []
+    notification_push_enabled: bool = False
+    notification_push_provider: str = "fcm"
+    notification_push_endpoint: str = ""
+    notification_push_api_key: str = ""
+    notification_push_timeout_seconds: float = 8.0
+    notification_push_default_topics: List[str] = []
 
     # Route optimization matrix provider
     route_matrix_provider: str = "osrm"

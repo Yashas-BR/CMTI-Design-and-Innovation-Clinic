@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from time import perf_counter
 
 import httpx
@@ -32,20 +33,29 @@ def _build_payload(index: int) -> dict:
     }
 
 
-async def _one_request(client: httpx.AsyncClient, base_url: str, index: int) -> tuple[int, float]:
+async def _one_request(
+    client: httpx.AsyncClient,
+    base_url: str,
+    index: int,
+    api_key: str,
+) -> tuple[int, float]:
     start = perf_counter()
-    response = await client.post(f"{base_url}/api/v1/mqtt/ingest", json=_build_payload(index))
+    response = await client.post(
+        f"{base_url}/api/v1/mqtt/ingest",
+        json=_build_payload(index),
+        headers={"X-API-Key": api_key},
+    )
     elapsed = perf_counter() - start
     return response.status_code, elapsed
 
 
-async def run_load(base_url: str, requests: int, concurrency: int) -> None:
+async def run_load(base_url: str, requests: int, concurrency: int, api_key: str) -> None:
     semaphore = asyncio.Semaphore(max(concurrency, 1))
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         async def wrapped(index: int) -> tuple[int, float]:
             async with semaphore:
-                return await _one_request(client, base_url, index)
+                return await _one_request(client, base_url, index, api_key)
 
         started = perf_counter()
         results = await asyncio.gather(*[wrapped(i) for i in range(requests)])
@@ -77,6 +87,14 @@ if __name__ == "__main__":
     parser.add_argument("--base-url", default="http://localhost:8000", help="API base URL")
     parser.add_argument("--requests", type=int, default=200, help="Total requests")
     parser.add_argument("--concurrency", type=int, default=20, help="Concurrent workers")
+    parser.add_argument(
+        "--api-key",
+        default=os.getenv("MQTT_INGEST_API_KEY", ""),
+        help="X-API-Key value (or set MQTT_INGEST_API_KEY env var)",
+    )
     args = parser.parse_args()
 
-    asyncio.run(run_load(args.base_url, args.requests, args.concurrency))
+    if not args.api_key:
+        raise SystemExit("Missing API key. Provide --api-key or set MQTT_INGEST_API_KEY.")
+
+    asyncio.run(run_load(args.base_url, args.requests, args.concurrency, args.api_key))

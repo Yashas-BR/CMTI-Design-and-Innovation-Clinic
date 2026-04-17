@@ -19,7 +19,7 @@ Scope: Current implementation status for API routes, related service behavior, a
 | POST   | /api/v1/users/{user_id}/roles/remove             | Yes (authority only)      | Explicitly remove role(s) from one user         |
 | POST   | /api/v1/users/{user_id}/deactivate               | Yes (authority only)      | Soft deactivate one user                        |
 | POST   | /api/v1/users/{user_id}/password/reset           | Yes (authority only)      | Reset one user password                         |
-| POST   | /api/v1/mqtt/ingest                              | No (currently open)       | Ingest one MQTT envelope and trigger evaluation |
+| POST   | /api/v1/mqtt/ingest                              | Yes (X-API-Key required)  | Ingest one MQTT envelope and trigger evaluation |
 | POST   | /api/v1/bins                                     | Yes (authority only)      | Create one bin                                  |
 | GET    | /api/v1/bins                                     | Yes (authority or driver) | List bins with filters/pagination               |
 | GET    | /api/v1/bins/search                              | Yes (authority or driver) | Search bins by code/name/address                |
@@ -55,6 +55,10 @@ Scope: Current implementation status for API routes, related service behavior, a
 ### 2.2 MQTT Ingestion Route
 
 The `POST /api/v1/mqtt/ingest` route is implemented with full service-layer processing:
+
+0. Route access guard
+
+- Requires `X-API-Key` header matched against backend config (`mqtt_ingest_api_key`).
 
 1. Topic parsing and validation
 

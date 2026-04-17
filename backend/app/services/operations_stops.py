@@ -9,9 +9,11 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.iot import CollectionEvent, Route, RouteAssignment, RouteStop
+from app.models.iot import Alert, AlertEvent, Bin, BinCurrentState, CollectionEvent, Route, RouteAssignment, RouteStop
+from app.services.bin_state_realtime import broadcast_bin_current_state_update
 from app.services.operations_audit import append_audit_log, find_audit_by_request
 from app.services.operations_common import STOP_TRANSITIONS, validate_transition
+from app.services.operations_routes import auto_complete_route_if_terminal
 
 
 AUTHORITY_ROLES = {"authority_admin", "authority_operator"}
@@ -199,6 +201,117 @@ async def _resolve_assignment_for_action(
     return assignment, actor_user_id
 
 
+def _derive_alert_level(fill_pct: float, *, threshold_green: float, threshold_yellow: float) -> str:
+    if fill_pct >= threshold_yellow:
+        return "RED"
+    if fill_pct >= threshold_green:
+        return "YELLOW"
+    return "GREEN"
+
+
+async def _sync_bin_state_after_service(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    stop: RouteStop,
+    event_ts: datetime,
+    fill_after_pct: float | None,
+    actor_user_id: int,
+) -> None:
+    bin_obj = (
+        await db.execute(
+            select(Bin)
+            .where(Bin.id == stop.bin_id, Bin.org_id == org_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if bin_obj is None:
+        return
+
+    effective_fill_after = max(0.0, min(100.0, fill_after_pct if fill_after_pct is not None else 0.0))
+    alert_level = _derive_alert_level(
+        effective_fill_after,
+        threshold_green=float(bin_obj.threshold_green),
+        threshold_yellow=float(bin_obj.threshold_yellow),
+    )
+
+    state = (
+        await db.execute(select(BinCurrentState).where(BinCurrentState.bin_id == stop.bin_id).limit(1))
+    ).scalar_one_or_none()
+    now = _now_utc()
+    if state is None:
+        db.add(
+            BinCurrentState(
+                bin_id=stop.bin_id,
+                last_telemetry_id=None,
+                device_id=None,
+                last_measured_at=event_ts,
+                current_fill_pct=Decimal(str(effective_fill_after)),
+                current_fill_rate_pct_per_min=None,
+                current_ttf_min=None,
+                current_priority_score=None,
+                current_alert_level=alert_level,
+                overflow_imminent=False,
+                device_connectivity_state="unknown",
+                queued_count=0,
+                updated_at=now,
+            )
+        )
+    else:
+        state.last_measured_at = event_ts
+        state.current_fill_pct = Decimal(str(effective_fill_after))
+        state.current_fill_rate_pct_per_min = None
+        state.current_ttf_min = None
+        state.current_priority_score = None
+        state.current_alert_level = alert_level
+        state.overflow_imminent = False
+        state.queued_count = 0
+        state.updated_at = now
+
+    bin_obj.last_service_at = event_ts
+    bin_obj.updated_by = actor_user_id
+
+
+async def _resolve_service_related_alerts(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    stop: RouteStop,
+    actor_user_id: int,
+    event_ts: datetime,
+) -> None:
+    open_alerts = (
+        await db.execute(
+            select(Alert).where(
+                Alert.org_id == org_id,
+                Alert.bin_id == stop.bin_id,
+                Alert.status == "open",
+                Alert.alert_type.in_(["fill_threshold", "overflow_imminent"]),
+            )
+        )
+    ).scalars().all()
+
+    if not open_alerts:
+        return
+
+    now = _now_utc()
+    for alert in open_alerts:
+        alert.status = "resolved"
+        alert.resolved_at = now
+        alert.acknowledged_at = alert.acknowledged_at or now
+        alert.updated_at = now
+        db.add(
+            AlertEvent(
+                alert_id=alert.id,
+                event_type="resolved",
+                actor_user_id=actor_user_id,
+                event_ts=event_ts,
+                note="Resolved automatically after stop was serviced.",
+                payload_json={"source": "stop_service", "route_stop_id": int(stop.id)},
+            )
+        )
+
+
 async def arrive_stop(
     db: AsyncSession,
     org_id: int,
@@ -347,6 +460,23 @@ async def service_stop(
         photo_url=photo_url,
     )
 
+    await _sync_bin_state_after_service(
+        db,
+        org_id=org_id,
+        stop=stop,
+        event_ts=event_ts,
+        fill_after_pct=fill_after_pct,
+        actor_user_id=actor_user_id,
+    )
+
+    await _resolve_service_related_alerts(
+        db,
+        org_id=org_id,
+        stop=stop,
+        actor_user_id=actor_user_id,
+        event_ts=event_ts,
+    )
+
     await append_audit_log(
         db,
         org_id=org_id,
@@ -359,8 +489,16 @@ async def service_stop(
         request_id=idempotency_key,
     )
 
+    await auto_complete_route_if_terminal(
+        db,
+        org_id=org_id,
+        route_id=route.id,
+        actor_user_id=actor_user_id,
+    )
+
     await db.commit()
     await db.refresh(stop)
+    await broadcast_bin_current_state_update(db, bin_id=stop.bin_id)
     return _stop_to_dict(stop)
 
 
@@ -438,6 +576,13 @@ async def skip_stop(
         before_json=before_state,
         after_json=_stop_to_dict(stop),
         request_id=idempotency_key,
+    )
+
+    await auto_complete_route_if_terminal(
+        db,
+        org_id=org_id,
+        route_id=route.id,
+        actor_user_id=actor_user_id,
     )
 
     await db.commit()

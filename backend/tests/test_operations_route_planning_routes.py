@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.deps.auth import AuthUser, require_authority_user
+from app.api.deps.auth import AuthUser, require_authority_or_driver_user, require_authority_user
 from app.main import app
 
 
@@ -203,6 +203,74 @@ async def test_publish_route_route_returns_published() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "published"
+
+
+@pytest.mark.asyncio
+async def test_start_route_route_returns_in_progress() -> None:
+    """Start endpoint should return in-progress route payload."""
+    mock_result = {
+        "id": 7001,
+        "org_id": 1,
+        "route_code": "R-20260418-A",
+        "route_date": "2026-04-18",
+        "depot_id": 2,
+        "status": "in_progress",
+        "total_distance_km": 8.2,
+        "estimated_duration_min": 34.5,
+        "optimization_run_id": None,
+        "created_by": 10,
+        "updated_by": 10,
+        "stops_count": 3,
+        "start_point": None,
+        "created_at": "2026-04-17T10:00:00Z",
+        "updated_at": "2026-04-17T10:05:00Z",
+    }
+
+    app.dependency_overrides[require_authority_or_driver_user] = _authority_user_override
+    try:
+        with patch("app.api.v1.operations.start_route", new=AsyncMock(return_value=mock_result)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/v1/operations/routes/7001/start")
+    finally:
+        app.dependency_overrides.pop(require_authority_or_driver_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_complete_route_route_returns_completed() -> None:
+    """Complete endpoint should return completed route payload."""
+    mock_result = {
+        "id": 7001,
+        "org_id": 1,
+        "route_code": "R-20260418-A",
+        "route_date": "2026-04-18",
+        "depot_id": 2,
+        "status": "completed",
+        "total_distance_km": 8.2,
+        "estimated_duration_min": 34.5,
+        "optimization_run_id": None,
+        "created_by": 10,
+        "updated_by": 10,
+        "stops_count": 3,
+        "start_point": None,
+        "created_at": "2026-04-17T10:00:00Z",
+        "updated_at": "2026-04-17T12:30:00Z",
+    }
+
+    app.dependency_overrides[require_authority_or_driver_user] = _authority_user_override
+    try:
+        with patch("app.api.v1.operations.complete_route", new=AsyncMock(return_value=mock_result)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/v1/operations/routes/7001/complete")
+    finally:
+        app.dependency_overrides.pop(require_authority_or_driver_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
 
 
 @pytest.mark.asyncio

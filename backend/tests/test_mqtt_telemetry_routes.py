@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.deps.auth import AuthUser, require_authority_or_driver_user
+from app.core.config import settings
 from app.main import app
 
 
@@ -48,7 +49,11 @@ async def test_mqtt_ingest_route_returns_created() -> None:
     with patch("app.api.v1.mqtt.ingest_mqtt_message", new=AsyncMock(return_value=mock_result)):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post("/api/v1/mqtt/ingest", json=payload)
+            response = await client.post(
+                "/api/v1/mqtt/ingest",
+                json=payload,
+                headers={"X-API-Key": settings.mqtt_ingest_api_key},
+            )
 
     assert response.status_code == 201
     body = response.json()
@@ -112,6 +117,23 @@ async def test_telemetry_summary_route_returns_counters() -> None:
 
     assert response.status_code == 200
     assert response.json()["open_alerts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mqtt_ingest_requires_api_key() -> None:
+    """MQTT ingest route should reject requests without X-API-Key."""
+    payload = {
+        "topic": "smartbin/BIN_001/data",
+        "payload": {"bin_id": "BIN_001"},
+        "qos": 0,
+        "retain": False,
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/mqtt/ingest", json=payload)
+
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

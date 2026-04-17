@@ -12,6 +12,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.iot import Bin
 
 
+_BIN_UPDATE_FIELDS = {
+    "display_name",
+    "address_line",
+    "area_id",
+    "depot_id",
+    "latitude",
+    "longitude",
+    "capacity_liters",
+    "bin_height_cm",
+    "dead_zone_cm",
+    "threshold_green",
+    "threshold_yellow",
+    "distance_factor",
+    "status",
+    "installed_at",
+    "last_service_at",
+    "is_active",
+}
+
+
 def _to_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -102,10 +122,15 @@ async def update_bin(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     """Partially update one org-scoped bin."""
+    unexpected = sorted(set(payload) - _BIN_UPDATE_FIELDS)
+    if unexpected:
+        raise ValueError(f"unexpected update fields: {', '.join(unexpected)}")
+
     bin_obj = await _get_bin_scoped(db, org_id, bin_id)
 
-    for key, value in payload.items():
-        setattr(bin_obj, key, value)
+    for key in _BIN_UPDATE_FIELDS:
+        if key in payload:
+            setattr(bin_obj, key, payload[key])
 
     bin_obj.updated_by = actor_user_id
     await db.commit()

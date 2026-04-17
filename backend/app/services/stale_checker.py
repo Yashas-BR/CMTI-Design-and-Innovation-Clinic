@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.database import SessionLocal
 from app.models.iot import Alert, AlertEvent, Bin, BinCurrentState
+from app.services.bin_state_realtime import broadcast_bin_current_state_update
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,13 @@ class StaleBinChecker:
 
             stale_opened = 0
             stale_resolved = 0
+            changed_bin_ids: set[int] = set()
 
             for state, bin_obj in stale_rows:
-                state.device_connectivity_state = "offline"
-                state.updated_at = now
+                if state.device_connectivity_state != "offline":
+                    state.device_connectivity_state = "offline"
+                    state.updated_at = now
+                    changed_bin_ids.add(int(bin_obj.id))
 
                 open_alert = (
                     await db.execute(
@@ -151,8 +155,10 @@ class StaleBinChecker:
                 open_alert.status = "resolved"
                 open_alert.resolved_at = now
                 open_alert.updated_at = now
-                state.device_connectivity_state = "online"
-                state.updated_at = now
+                if state.device_connectivity_state != "online":
+                    state.device_connectivity_state = "online"
+                    state.updated_at = now
+                    changed_bin_ids.add(int(bin_obj.id))
                 db.add(
                     AlertEvent(
                         alert_id=open_alert.id,
@@ -168,6 +174,9 @@ class StaleBinChecker:
                 stale_resolved += 1
 
             await db.commit()
+
+            for bin_id in changed_bin_ids:
+                await broadcast_bin_current_state_update(db, bin_id=bin_id)
 
         if stale_opened or stale_resolved:
             logger.info("Stale checker changes: opened=%s resolved=%s", stale_opened, stale_resolved)

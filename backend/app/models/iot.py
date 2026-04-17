@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -140,6 +140,29 @@ class DriverShift(Base, TimestampMixin):
     actual_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class OptimizationRun(Base):
+    """Route optimization execution metadata and status history."""
+
+    __tablename__ = "optimization_runs"
+    __table_args__ = (
+        Index("ix_optimization_runs_org_started", "org_id", "run_started_at"),
+        Index("ix_optimization_runs_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    run_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    run_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    algorithm_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    algorithm_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    input_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result_summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class Route(Base, TimestampMixin):
@@ -313,6 +336,12 @@ class MqttRawMessage(Base):
     """Raw MQTT message log for replay/debugging and ingestion audit."""
 
     __tablename__ = "mqtt_raw_messages"
+    __table_args__ = (
+        Index("ix_mqtt_raw_messages_received_at", "received_at"),
+        Index("ix_mqtt_raw_messages_topic", "topic"),
+        Index("ix_mqtt_raw_messages_parse_status", "parse_status"),
+        Index("ix_mqtt_raw_messages_bin_id", "bin_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -332,6 +361,11 @@ class BinTelemetry(Base):
     """Parsed telemetry rows used for analytics and trend charts."""
 
     __tablename__ = "bin_telemetry"
+    __table_args__ = (
+        Index("ix_bin_telemetry_bin_measured", "bin_id", "measured_at"),
+        Index("ix_bin_telemetry_alert_measured", "alert_level", "measured_at"),
+        Index("ix_bin_telemetry_overflow", "overflow_imminent", "measured_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id", ondelete="CASCADE"), nullable=False)
@@ -427,3 +461,20 @@ class AlertEvent(Base):
     event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class InAppNotification(Base, TimestampMixin):
+    """Per-user in-app notification rows for real-time dashboard delivery."""
+
+    __tablename__ = "in_app_notifications"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

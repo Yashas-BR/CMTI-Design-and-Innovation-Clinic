@@ -9,6 +9,7 @@ from app.api.v1 import router as v1_router
 from app.core.config import settings
 from app.services.mqtt_worker import mqtt_consumer_worker
 from app.services.stale_checker import stale_bin_checker
+from app.services.telemetry_retention import telemetry_retention_worker
 
 
 def create_app() -> FastAPI:
@@ -43,10 +44,13 @@ def create_app() -> FastAPI:
             stale_bin_checker.start()
         if settings.mqtt_consumer_enabled:
             mqtt_consumer_worker.start(asyncio.get_running_loop())
+        if settings.telemetry_retention_enabled:
+            telemetry_retention_worker.start()
 
     @app.on_event("shutdown")
     async def shutdown_background_services() -> None:
         await stale_bin_checker.stop()
+        await telemetry_retention_worker.stop()
         mqtt_consumer_worker.stop()
 
     return app

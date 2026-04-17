@@ -11,6 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.iot import Vehicle
 
 
+_VEHICLE_UPDATE_FIELDS = {
+    "vehicle_no",
+    "vehicle_type",
+    "capacity_kg",
+    "status",
+    "is_active",
+}
+
+
 def _to_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -69,10 +78,15 @@ async def get_vehicle(db: AsyncSession, org_id: int, vehicle_id: int) -> dict[st
 
 async def update_vehicle(db: AsyncSession, org_id: int, vehicle_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     """Partially update one org-scoped vehicle."""
+    unexpected = sorted(set(payload) - _VEHICLE_UPDATE_FIELDS)
+    if unexpected:
+        raise ValueError(f"unexpected update fields: {', '.join(unexpected)}")
+
     vehicle = await _get_vehicle_scoped(db, org_id, vehicle_id)
 
-    for key, value in payload.items():
-        setattr(vehicle, key, value)
+    for key in _VEHICLE_UPDATE_FIELDS:
+        if key in payload:
+            setattr(vehicle, key, payload[key])
 
     await db.commit()
     await db.refresh(vehicle)

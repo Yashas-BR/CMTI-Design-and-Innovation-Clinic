@@ -37,7 +37,15 @@ from app.services.operations_assignments import (
     list_route_assignments,
     reject_route_assignment,
 )
-from app.services.operations_routes import create_route_draft, get_route, list_routes, plan_route, publish_route
+from app.services.operations_routes import (
+    complete_route,
+    create_route_draft,
+    get_route,
+    list_routes,
+    plan_route,
+    publish_route,
+    start_route,
+)
 from app.services.operations_shifts import complete_shift, create_shift, get_shift, list_shifts, start_shift
 from app.services.operations_stops import arrive_stop, list_route_stops, service_stop, skip_stop
 from app.services.operations_vehicles import create_vehicle, deactivate_vehicle, get_vehicle, list_vehicles, update_vehicle
@@ -271,6 +279,8 @@ async def plan_route_route(
             target_shift_minutes=payload.target_shift_minutes,
             avg_speed_kmph=payload.avg_speed_kmph,
             service_minutes_per_stop=payload.service_minutes_per_stop,
+            use_multi_vehicle=payload.use_multi_vehicle,
+            vehicle_ids=payload.vehicle_ids,
             actor_user_id=user.id,
             ip_address=request.client.host if request.client is not None else None,
             user_agent=request.headers.get("user-agent"),
@@ -366,6 +376,52 @@ async def publish_route_route(
             route_id,
             driver_user_id=payload.driver_user_id,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=_status_for_value_error(exc), detail=str(exc)) from exc
+
+    return RouteResponse(**data)
+
+
+@router.post("/routes/{route_id}/start", response_model=RouteResponse)
+async def start_route_route(
+    route_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(require_authority_or_driver_user),
+) -> RouteResponse:
+    """Start one route if caller is authority or an assigned driver."""
+    try:
+        data = await start_route(
+            db,
+            user.org_id,
+            user.id,
+            user.roles,
+            route_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=_status_for_value_error(exc), detail=str(exc)) from exc
+
+    return RouteResponse(**data)
+
+
+@router.post("/routes/{route_id}/complete", response_model=RouteResponse)
+async def complete_route_route(
+    route_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(require_authority_or_driver_user),
+) -> RouteResponse:
+    """Complete one route if caller is authority or an assigned driver."""
+    try:
+        data = await complete_route(
+            db,
+            user.org_id,
+            user.id,
+            user.roles,
+            route_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=_status_for_value_error(exc), detail=str(exc)) from exc
 
