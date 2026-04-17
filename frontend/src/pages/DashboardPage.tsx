@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
-import { Download, LogOut, MapPinned, Plus, RefreshCw, Route, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { CheckCircle2, Download, LogOut, MapPinned, Plus, RefreshCw, Route, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import {
@@ -84,6 +84,7 @@ type DashboardPageProps = {
 function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
   const isAdmin = user.role === 'Authority'
   const isOperator = user.role === 'Operator'
+  const isDriver = user.role === 'Driver'
 
   const [activeTab, setActiveTab] = useState<DashboardTab>('monitoring')
   const [data, setData] = useState<DashboardData | null>(null)
@@ -136,6 +137,9 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
   const [controlsSaving, setControlsSaving] = useState(false)
   const [controlsError, setControlsError] = useState('')
   const [controlsNotice, setControlsNotice] = useState('')
+  const [collectingBinId, setCollectingBinId] = useState<string | null>(null)
+  const [collectError, setCollectError] = useState('')
+  const [collectNotice, setCollectNotice] = useState('')
 
   const fetchDashboardData = useCallback(async (silent = false) => {
     if (!silent) {
@@ -498,6 +502,36 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
 
     setControls((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const handleMarkCollected = async (binId: string) => {
+    if (!binId) {
+      return
+    }
+
+    setCollectError('')
+    setCollectNotice('')
+    setCollectingBinId(binId)
+
+    try {
+      await axios.post(
+        `${apiUrl}/dashboard/collect/${encodeURIComponent(binId)}`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
+      setCollectNotice(`Marked ${binId} as collected.`)
+      await fetchDashboardData()
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        setCollectError((error.response?.data as { error?: string })?.error ?? `Failed to mark ${binId} as collected`)
+      } else {
+        setCollectError(`Failed to mark ${binId} as collected`)
+      }
+    } finally {
+      setCollectingBinId(null)
+    }
   }
 
   const lastUpdatedLabel = lastUpdatedAt
@@ -1062,6 +1096,17 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                           </CardTitle>
                         </CardHeader>
                         <CardContent>
+                          {isDriver && collectNotice ? (
+                            <p className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                              {collectNotice}
+                            </p>
+                          ) : null}
+                          {isDriver && collectError ? (
+                            <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                              {collectError}
+                            </p>
+                          ) : null}
+
                           {route.plan?.length ? (
                             <div className="overflow-x-auto rounded-xl border">
                               <Table>
@@ -1071,6 +1116,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                                     <TableHead>Bin ID</TableHead>
                                     <TableHead>Priority</TableHead>
                                     <TableHead>Distance (km)</TableHead>
+                                    {isDriver ? <TableHead>Action</TableHead> : null}
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -1080,6 +1126,19 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                                       <TableCell>{stop.Bin_ID}</TableCell>
                                       <TableCell>{stop.Priority.toFixed(2)}</TableCell>
                                       <TableCell>{stop['Distance_from_Depot(km)'].toFixed(2)}</TableCell>
+                                      {isDriver ? (
+                                        <TableCell>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => void handleMarkCollected(stop.Bin_ID)}
+                                            disabled={collectingBinId === stop.Bin_ID}
+                                          >
+                                            <CheckCircle2 className="mr-1 h-4 w-4" />
+                                            {collectingBinId === stop.Bin_ID ? 'Updating...' : 'Mark as Collected'}
+                                          </Button>
+                                        </TableCell>
+                                      ) : null}
                                     </TableRow>
                                   ))}
                                 </TableBody>

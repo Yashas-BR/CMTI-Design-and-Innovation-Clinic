@@ -54,6 +54,8 @@ BIN_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "bin_registry.json")
 BIN_REGISTRY: List[Dict[str, Any]] = []
 COLLECTION_CENTERS_FILE = os.path.join(os.path.dirname(__file__), "collection_centers.json")
 COLLECTION_CENTERS: List[Dict[str, Any]] = []
+COLLECTION_EVENTS_FILE = os.path.join(os.path.dirname(__file__), "collection_events.json")
+COLLECTION_EVENTS: Dict[str, Dict[str, str]] = {}
 
 DRIVER_ASSIGNMENTS = {
     "driverA": ["B1", "B2", "B3"],
@@ -200,6 +202,44 @@ def load_collection_centers() -> List[Dict[str, Any]]:
     return normalized if normalized else [dict(item) for item in DEFAULT_COLLECTION_CENTERS]
 
 
+def load_collection_events() -> Dict[str, Dict[str, str]]:
+    """Load persisted collection events keyed by bin id."""
+    if not os.path.exists(COLLECTION_EVENTS_FILE):
+        return {}
+
+    try:
+        with open(COLLECTION_EVENTS_FILE, "r", encoding="utf-8") as file_handle:
+            loaded = json.load(file_handle)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    if not isinstance(loaded, dict):
+        return {}
+
+    normalized: Dict[str, Dict[str, str]] = {}
+    for bin_id, payload in loaded.items():
+        if not isinstance(bin_id, str) or not isinstance(payload, dict):
+            continue
+
+        collected_at = str(payload.get("collected_at", "")).strip()
+        collected_by = str(payload.get("collected_by", "")).strip()
+        if not collected_at or not collected_by:
+            continue
+
+        normalized[bin_id] = {
+            "collected_at": collected_at,
+            "collected_by": collected_by,
+        }
+
+    return normalized
+
+
+def save_collection_events() -> None:
+    """Persist collection events to disk."""
+    with open(COLLECTION_EVENTS_FILE, "w", encoding="utf-8") as file_handle:
+        json.dump(COLLECTION_EVENTS, file_handle, indent=2)
+
+
 BIN_REGISTRY = load_bin_registry()
 if not os.path.exists(BIN_REGISTRY_FILE):
     save_bin_registry()
@@ -207,6 +247,10 @@ if not os.path.exists(BIN_REGISTRY_FILE):
 COLLECTION_CENTERS = load_collection_centers()
 if not os.path.exists(COLLECTION_CENTERS_FILE):
     save_collection_centers()
+
+COLLECTION_EVENTS = load_collection_events()
+if not os.path.exists(COLLECTION_EVENTS_FILE):
+    save_collection_events()
 
 
 def next_bin_id() -> str:
@@ -326,6 +370,29 @@ def generate_data(seed: int, base_fill_rate: float) -> List[BinRecord]:
         status = assign_status(fill_percent)
 
         fill_rate = round(random.uniform(max(0.5, base_fill_rate - 1.0), base_fill_rate + 1.5), 2)
+
+        event = COLLECTION_EVENTS.get(bin_id)
+        if event:
+            collected_at_raw = event.get("collected_at", "")
+            try:
+                collected_at = datetime.fromisoformat(collected_at_raw.replace("Z", "+00:00"))
+                elapsed_hours = max(
+                    0.0,
+                    (datetime.now(collected_at.tzinfo) - collected_at).total_seconds() / 3600.0,
+                )
+                fill_percent = round(min(100.0, elapsed_hours * fill_rate), 2)
+                # Derive a synthetic distance from fill percentage so table values stay coherent.
+                distance_cm = round(
+                    max(
+                        MIN_DISTANCE_CM,
+                        min(MAX_DISTANCE_CM, BIN_HEIGHT_CM * (1 - (fill_percent / 100.0))),
+                    ),
+                    2,
+                )
+                status = assign_status(fill_percent)
+            except ValueError:
+                pass
+
         time_remaining = estimate_time_remaining(fill_percent, fill_rate)
         urgency_score = calculate_urgency_score(time_remaining)
 
@@ -623,6 +690,8 @@ def get_dashboard_data() -> Tuple[Dict[str, Any], int]:
     seed, base_fill_rate, priority_threshold = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
+    if role == "Driver":
+        records = filter_records_for_driver(records, DRIVER_ASSIGNMENTS.get(username, []))
 
     rows = records_to_rows(records)
 
@@ -663,6 +732,8 @@ def get_priority_queue() -> Tuple[Dict[str, Any], int]:
     seed, base_fill_rate, _ = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
+    if role == "Driver":
+        records = filter_records_for_driver(records, DRIVER_ASSIGNMENTS.get(username, []))
 
     rows = sorted(records_to_rows(records), key=lambda row: float(row["Priority"]), reverse=True)
     return {"queue": rows}, 200
@@ -687,9 +758,52 @@ def get_route_plan() -> Tuple[Dict[str, Any], int]:
     seed, base_fill_rate, priority_threshold = read_simulation_controls()
 
     records = generate_data(seed=seed, base_fill_rate=base_fill_rate)
+    if role == "Driver":
+        records = filter_records_for_driver(records, DRIVER_ASSIGNMENTS.get(username, []))
 
     plan = route_plan(records, threshold=priority_threshold)
     return {"plan": plan, "role": role}, 200
+
+
+@app.route("/api/dashboard/collect/<bin_id>", methods=["POST"])
+def mark_bin_collected(bin_id: str) -> Tuple[Dict[str, Any], int]:
+    """Mark a bin as collected by a driver to close the dispatch loop."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Unauthenticated"}, 401
+
+    token = auth_header[7:]
+    try:
+        payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}, 401
+
+    role = payload.get("role", "")
+    username = payload.get("username", "")
+
+    if role != "Driver":
+        return {"error": "Only drivers can mark bins as collected"}, 403
+
+    if get_bin_definition(bin_id) is None:
+        return {"error": "Bin not found"}, 404
+
+    assigned_bins = DRIVER_ASSIGNMENTS.get(str(username), [])
+    if bin_id not in assigned_bins:
+        return {"error": "Bin is not assigned to this driver"}, 403
+
+    collected_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    COLLECTION_EVENTS[bin_id] = {
+        "collected_at": collected_at,
+        "collected_by": str(username),
+    }
+    save_collection_events()
+
+    return {
+        "message": f"Bin {bin_id} marked as collected",
+        "bin_id": bin_id,
+        "collected_at": collected_at,
+        "collected_by": username,
+    }, 200
 
 
 @app.route("/api/dashboard/export", methods=["GET"])
@@ -808,6 +922,10 @@ def manage_single_bin(bin_id: str) -> Tuple[Dict[str, Any], int]:
     if request.method == "DELETE":
         BIN_REGISTRY.remove(bin_definition)
         save_bin_registry()
+
+        if bin_id in COLLECTION_EVENTS:
+            COLLECTION_EVENTS.pop(bin_id, None)
+            save_collection_events()
 
         for driver_name, assigned_bins in DRIVER_ASSIGNMENTS.items():
             DRIVER_ASSIGNMENTS[driver_name] = [assigned_bin for assigned_bin in assigned_bins if assigned_bin != bin_id]
