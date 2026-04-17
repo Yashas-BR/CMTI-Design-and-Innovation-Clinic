@@ -4,13 +4,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from .config import settings
 
-# Password context for hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+def _load_bcrypt_module():
+    """Load bcrypt lazily to keep runtime dependency explicit."""
+    return __import__("bcrypt")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
@@ -23,7 +23,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         True if password matches, False otherwise
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    bcrypt = _load_bcrypt_module()
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except ValueError:
+        return False
 
 
 def get_password_hash(password: str) -> str:
@@ -36,7 +40,8 @@ def get_password_hash(password: str) -> str:
     Returns:
         The hashed password
     """
-    return pwd_context.hash(password)
+    bcrypt = _load_bcrypt_module()
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def create_access_token(

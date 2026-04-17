@@ -4,7 +4,7 @@
 **Base URL:** `http://<host>/api/v1`  
 **API Prefix set in backend config:** `/api/v1`  
 **Interactive Docs:** `http://<host>/docs` (Swagger UI)  
-**OpenAPI JSON:** `http://<host>/openapi.json`  
+**OpenAPI JSON:** `http://<host>/openapi.json`
 
 ---
 
@@ -13,28 +13,28 @@
 1. [Authentication Model](#1-authentication-model)
 2. [Roles Reference](#2-roles-reference)
 3. [Common Conventions](#3-common-conventions)
-4. [Health Check Routes](#4-health-check-routes) — *Public*
-5. [Auth Routes](#5-auth-routes) — *Mixed*
-6. [User Management Routes](#6-user-management-routes) — *Authority Only*
-7. [Master Data Routes](#7-master-data-routes) — *Authority Only*
+4. [Health Check Routes](#4-health-check-routes) — _Public_
+5. [Auth Routes](#5-auth-routes) — _Mixed_
+6. [User Management Routes](#6-user-management-routes) — _Authority Only_
+7. [Master Data Routes](#7-master-data-routes) — _Authority Only_
    - 7A. Depots
    - 7B. Service Areas
    - 7C. Driver Profiles
-8. [Bin Routes](#8-bin-routes) — *Authority + Driver (read)*
-9. [Device Routes](#9-device-routes) — *Authority + Driver (read)*
-10. [Telemetry Routes](#10-telemetry-routes) — *Authority + Driver*
-11. [Alert Routes](#11-alert-routes) — *Authority + Driver*
+8. [Bin Routes](#8-bin-routes) — _Authority + Driver (read)_
+9. [Device Routes](#9-device-routes) — _Authority + Driver (read)_
+10. [Telemetry Routes](#10-telemetry-routes) — _Authority + Driver_
+11. [Alert Routes](#11-alert-routes) — _Authority + Driver_
 12. [Operations Routes](#12-operations-routes)
-    - 12A. Vehicles — *Authority Only*
-    - 12B. Shifts — *Authority + Driver*
-    - 12C. Route Planning — *Authority Only*
-    - 12D. Routes — *Authority Only / + Driver for progression*
-    - 12E. Route Assignments — *Authority + Driver*
-    - 12F. Route Stops — *Authority + Driver*
-13. [Analytics Routes](#13-analytics-routes) — *Authority Only*
-14. [Notification Routes](#14-notification-routes) — *Authority + Driver*
-15. [Realtime Channels](#15-realtime-channels) — *Authority + Driver*
-16. [MQTT Ingest Route](#16-mqtt-ingest-route) — *API Key Protected*
+    - 12A. Vehicles — _Authority Only_
+    - 12B. Shifts — _Authority + Driver_
+    - 12C. Route Planning — _Authority Only_
+    - 12D. Routes — _Authority Only / + Driver for progression_
+    - 12E. Route Assignments — _Authority + Driver_
+    - 12F. Route Stops — _Authority + Driver_
+13. [Analytics Routes](#13-analytics-routes) — _Authority Only_
+14. [Notification Routes](#14-notification-routes) — _Authority + Driver_
+15. [Realtime Channels](#15-realtime-channels) — _Authority + Driver_
+16. [MQTT Ingest Route](#16-mqtt-ingest-route) — _API Key Protected_
 17. [Error Codes Reference](#17-error-codes-reference)
 18. [Integration Workflow Guide](#18-integration-workflow-guide)
 
@@ -49,6 +49,7 @@ Authorization: Bearer <access_token>
 ```
 
 **Token Lifecycle:**
+
 1. Login → receive `access_token` + `refresh_token`
 2. Use `access_token` for all API calls
 3. When `access_token` expires → call `/api/v1/auth/refresh` with `refresh_token`
@@ -60,11 +61,11 @@ Authorization: Bearer <access_token>
 
 ## 2. Roles Reference
 
-| Role Key | Description | Access Level |
-|---|---|---|
-| `authority_admin` | Full admin of the organization | Highest — all routes |
-| `authority_operator` | Operator within the organization | Same as admin for most routes |
-| `driver` | Field driver | Limited read + own-scope actions |
+| Role Key             | Description                      | Access Level                     |
+| -------------------- | -------------------------------- | -------------------------------- |
+| `authority_admin`    | Full admin of the organization   | Highest — all routes             |
+| `authority_operator` | Operator within the organization | Same as admin for most routes    |
+| `driver`             | Field driver                     | Limited read + own-scope actions |
 
 > **Note:** `authority_admin` and `authority_operator` are treated identically (both called "authority user") for route access. The only distinction is the last-admin guard preventing removal of the last `authority_admin`.
 
@@ -73,6 +74,7 @@ Authorization: Bearer <access_token>
 ## 3. Common Conventions
 
 ### Pagination
+
 All list endpoints support:
 | Parameter | Type | Default | Range | Description |
 |---|---|---|---|---|
@@ -80,6 +82,7 @@ All list endpoints support:
 | `offset` | int | 0 | ≥0 | Number of items to skip |
 
 All paginated responses return:
+
 ```json
 {
   "total": 120,
@@ -90,16 +93,20 @@ All paginated responses return:
 ```
 
 ### Datetime Format
+
 All datetime values use ISO 8601 format: `"2026-04-17T10:30:00"` or with timezone `"2026-04-17T10:30:00+05:30"`
 
 ### Date Format
+
 Date-only fields use: `"2026-04-17"`
 
 ### PATCH Semantics
+
 All `PATCH` endpoints support **partial updates** — only send the fields you want to change.  
 At least one field must be provided, otherwise a `400 Bad Request` is returned.
 
 ### Organization Scoping
+
 All data is automatically scoped to the authenticated user's organization (`org_id`). Frontend does not need to pass `org_id` — it is derived from the JWT.
 
 ---
@@ -113,6 +120,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Purpose:** General health check with app version.
 
 **Response `200 OK`:**
+
 ```json
 {
   "status": "healthy",
@@ -128,6 +136,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Purpose:** Kubernetes/Docker liveness probe.
 
 **Response `200 OK`:**
+
 ```json
 { "status": "alive" }
 ```
@@ -139,6 +148,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Purpose:** Kubernetes/Docker readiness probe.
 
 **Response `200 OK`:**
+
 ```json
 { "status": "ready" }
 ```
@@ -156,6 +166,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Purpose:** Login for all user roles (driver, operator, admin). Returns JWT token pair.
 
 **Request Body:**
+
 ```json
 {
   "email": "user@example.com",
@@ -163,12 +174,13 @@ All data is automatically scoped to the authenticated user's organization (`org_
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `email` | string (email) | ✅ | Valid email format |
-| `password` | string | ✅ | 1–128 characters |
+| Field      | Type           | Required | Constraints        |
+| ---------- | -------------- | -------- | ------------------ |
+| `email`    | string (email) | ✅       | Valid email format |
+| `password` | string         | ✅       | 1–128 characters   |
 
 **Response `200 OK`:**
+
 ```json
 {
   "access_token": "eyJ...",
@@ -181,15 +193,15 @@ All data is automatically scoped to the authenticated user's organization (`org_
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `access_token` | string | JWT to use in `Authorization` header |
-| `refresh_token` | string | Opaque token to renew access |
-| `token_type` | string | Always `"bearer"` |
-| `expires_in_seconds` | int | Access token TTL in seconds |
-| `role_keys` | string[] | Roles assigned to this user |
-| `user_id` | int | The logged-in user's ID |
-| `org_id` | int | The user's organization ID |
+| Field                | Type     | Description                          |
+| -------------------- | -------- | ------------------------------------ |
+| `access_token`       | string   | JWT to use in `Authorization` header |
+| `refresh_token`      | string   | Opaque token to renew access         |
+| `token_type`         | string   | Always `"bearer"`                    |
+| `expires_in_seconds` | int      | Access token TTL in seconds          |
+| `role_keys`          | string[] | Roles assigned to this user          |
+| `user_id`            | int      | The logged-in user's ID              |
+| `org_id`             | int      | The user's organization ID           |
 
 **Error Responses:**
 | Status | When |
@@ -204,15 +216,16 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Purpose:** Issue a new access token using a valid refresh token.
 
 **Request Body:**
+
 ```json
 {
   "refresh_token": "eyJ..."
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `refresh_token` | string | ✅ | Minimum 10 characters |
+| Field           | Type   | Required | Constraints           |
+| --------------- | ------ | -------- | --------------------- |
+| `refresh_token` | string | ✅       | Minimum 10 characters |
 
 **Response `200 OK`:** Same shape as login response (`LoginResponse`).
 
@@ -230,6 +243,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Authentication:** Authority user (admin or operator) JWT required.
 
 **Request Body:**
+
 ```json
 {
   "full_name": "Ravi Kumar",
@@ -239,14 +253,15 @@ All data is automatically scoped to the authenticated user's organization (`org_
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `full_name` | string | ✅ | 1–150 characters |
-| `email` | string (email) | ✅ | Valid email |
-| `password` | string | ✅ | 8–128 characters |
-| `phone` | string | ❌ | Max 30 characters |
+| Field       | Type           | Required | Constraints       |
+| ----------- | -------------- | -------- | ----------------- |
+| `full_name` | string         | ✅       | 1–150 characters  |
+| `email`     | string (email) | ✅       | Valid email       |
+| `password`  | string         | ✅       | 8–128 characters  |
+| `phone`     | string         | ❌       | Max 30 characters |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 15,
@@ -271,6 +286,39 @@ All data is automatically scoped to the authenticated user's organization (`org_
 
 ---
 
+### 5.4 — GET `/api/v1/auth/me`
+
+**Purpose:** Fetch the currently authenticated user's profile and role summary.
+
+**Authentication:** Any valid JWT (driver, authority_operator, authority_admin).
+
+**Request Body:** None
+
+**Response `200 OK`:**
+
+```json
+{
+  "id": 15,
+  "org_id": 7,
+  "full_name": "Ravi Kumar",
+  "email": "ravi@example.com",
+  "phone": "+919876543210",
+  "status": "active",
+  "is_active": true,
+  "role_keys": ["driver"],
+  "created_at": "2026-04-17T10:00:00",
+  "updated_at": "2026-04-17T10:00:00"
+}
+```
+
+**Error Responses:**
+| Status | When |
+|---|---|
+| `401 Unauthorized` | Missing, invalid, or expired JWT |
+| `404 Not Found` | User not found/inactive for token subject |
+
+---
+
 ## 6. User Management Routes
 
 > **Authentication:** Authority user JWT required for ALL routes below.
@@ -292,6 +340,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 | `is_active` | bool | — | Optional | Filter active/inactive users |
 
 **Response `200 OK`:**
+
 ```json
 {
   "total": 5,
@@ -338,15 +387,16 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Path Parameter:** `user_id` (int)
 
 **Request Body:**
+
 ```json
 {
   "role_keys": ["authority_operator"]
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `role_keys` | string[] | ✅ | Non-empty list of role key strings |
+| Field       | Type     | Required | Constraints                        |
+| ----------- | -------- | -------- | ---------------------------------- |
+| `role_keys` | string[] | ✅       | Non-empty list of role key strings |
 
 **Response `200 OK`:** Updated `UserResponse` with all current roles.
 
@@ -367,6 +417,7 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Path Parameter:** `user_id` (int)
 
 **Request Body:** Same shape as role add (`UserRoleMutationRequest`):
+
 ```json
 { "role_keys": ["driver"] }
 ```
@@ -406,13 +457,14 @@ All data is automatically scoped to the authenticated user's organization (`org_
 **Path Parameter:** `user_id` (int)
 
 **Request Body:**
+
 ```json
 { "new_password": "NewSecurePass123" }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `new_password` | string | ✅ | 8–128 characters |
+| Field          | Type   | Required | Constraints      |
+| -------------- | ------ | -------- | ---------------- |
+| `new_password` | string | ✅       | 8–128 characters |
 
 **Response `200 OK`:** Updated `UserResponse`.
 
@@ -437,6 +489,7 @@ Depots are the physical base locations for vehicles and route start points.
 **Purpose:** Create one depot.
 
 **Request Body:**
+
 ```json
 {
   "name": "North Depot",
@@ -448,16 +501,17 @@ Depots are the physical base locations for vehicles and route start points.
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `name` | string | ✅ | 1–120 characters |
-| `address` | string | ❌ | Max 255 characters |
-| `contact_phone` | string | ❌ | Max 30 characters |
-| `latitude` | float | ❌ | GPS latitude |
-| `longitude` | float | ❌ | GPS longitude |
-| `is_active` | bool | ❌ | Default: `true` |
+| Field           | Type   | Required | Constraints        |
+| --------------- | ------ | -------- | ------------------ |
+| `name`          | string | ✅       | 1–120 characters   |
+| `address`       | string | ❌       | Max 255 characters |
+| `contact_phone` | string | ❌       | Max 30 characters  |
+| `latitude`      | float  | ❌       | GPS latitude       |
+| `longitude`     | float  | ❌       | GPS longitude      |
+| `is_active`     | bool   | ❌       | Default: `true`    |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 3,
@@ -511,6 +565,7 @@ Depots are the physical base locations for vehicles and route start points.
 **Purpose:** Partial update of one depot.
 
 **Request Body (partial — only include fields to change):**
+
 ```json
 {
   "contact_phone": "+914420009999",
@@ -545,6 +600,7 @@ Service areas define geographic zones that bins belong to.
 **Purpose:** Create one service area.
 
 **Request Body:**
+
 ```json
 {
   "name": "Zone A - North",
@@ -556,16 +612,17 @@ Service areas define geographic zones that bins belong to.
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `name` | string | ✅ | 1–120 characters |
-| `center_latitude` | float | ❌ | GPS latitude |
-| `center_longitude` | float | ❌ | GPS longitude |
-| `boundary_geojson` | object | ❌ | GeoJSON geometry object |
-| `priority_weight` | float | ❌ | Default `1.0`, must be > 0 |
-| `is_active` | bool | ❌ | Default `true` |
+| Field              | Type   | Required | Constraints                |
+| ------------------ | ------ | -------- | -------------------------- |
+| `name`             | string | ✅       | 1–120 characters           |
+| `center_latitude`  | float  | ❌       | GPS latitude               |
+| `center_longitude` | float  | ❌       | GPS longitude              |
+| `boundary_geojson` | object | ❌       | GeoJSON geometry object    |
+| `priority_weight`  | float  | ❌       | Default `1.0`, must be > 0 |
+| `is_active`        | bool   | ❌       | Default `true`             |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 5,
@@ -624,6 +681,7 @@ Driver profiles extend user accounts with operational metadata (license, home de
 > **Prerequisite:** The `user_id` must already exist and have the `driver` role.
 
 **Request Body:**
+
 ```json
 {
   "user_id": 15,
@@ -634,15 +692,16 @@ Driver profiles extend user accounts with operational metadata (license, home de
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `user_id` | int | ✅ | Must be a valid user in the org |
-| `license_no` | string | ❌ | Max 80 characters |
-| `license_expiry` | date | ❌ | ISO date `YYYY-MM-DD` |
-| `home_depot_id` | int | ❌ | Valid depot ID |
-| `employment_status` | string | ✅ | 1–20 characters (e.g. `"full_time"`, `"contract"`) |
+| Field               | Type   | Required | Constraints                                        |
+| ------------------- | ------ | -------- | -------------------------------------------------- |
+| `user_id`           | int    | ✅       | Must be a valid user in the org                    |
+| `license_no`        | string | ❌       | Max 80 characters                                  |
+| `license_expiry`    | date   | ❌       | ISO date `YYYY-MM-DD`                              |
+| `home_depot_id`     | int    | ❌       | Valid depot ID                                     |
+| `employment_status` | string | ✅       | 1–20 characters (e.g. `"full_time"`, `"contract"`) |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 8,
@@ -693,6 +752,7 @@ Driver profiles extend user accounts with operational metadata (license, home de
 **Purpose:** Hard delete one driver profile (not a soft deactivate).
 
 **Response `200 OK`:**
+
 ```json
 { "id": 8, "deleted": true }
 ```
@@ -714,6 +774,7 @@ Driver profiles extend user accounts with operational metadata (license, home de
 **Purpose:** Create one IoT waste bin record.
 
 **Request Body:**
+
 ```json
 {
   "bin_code": "BIN-A001",
@@ -722,7 +783,7 @@ Driver profiles extend user accounts with operational metadata (license, home de
   "area_id": 5,
   "depot_id": 3,
   "latitude": 13.085,
-  "longitude": 80.210,
+  "longitude": 80.21,
   "capacity_liters": 120.0,
   "bin_height_cm": 80.0,
   "dead_zone_cm": 5.0,
@@ -735,26 +796,27 @@ Driver profiles extend user accounts with operational metadata (license, home de
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `bin_code` | string | ✅ | 1–50 chars, must be unique in org |
-| `display_name` | string | ❌ | Max 120 chars |
-| `address_line` | string | ❌ | Max 255 chars |
-| `area_id` | int | ❌ | Service area ID |
-| `depot_id` | int | ❌ | Depot ID |
-| `latitude` | float | ❌ | GPS latitude |
-| `longitude` | float | ❌ | GPS longitude |
-| `capacity_liters` | float | ❌ | Physical capacity |
-| `bin_height_cm` | float | ❌ | Default `60.0`, must be > 0 |
-| `dead_zone_cm` | float | ❌ | Default `5.0`, must be ≥ 0 |
-| `threshold_green` | float | ❌ | Default `50.0`, range 0–100. **Must be < `threshold_yellow`** |
-| `threshold_yellow` | float | ❌ | Default `80.0`, range 0–100 |
-| `distance_factor` | float | ❌ | Default `0.5`, range 0–1 |
-| `status` | string | ❌ | Default `"active"`, max 20 chars |
-| `installed_at` | datetime | ❌ | ISO datetime |
-| `last_service_at` | datetime | ❌ | ISO datetime |
+| Field              | Type     | Required | Constraints                                                   |
+| ------------------ | -------- | -------- | ------------------------------------------------------------- |
+| `bin_code`         | string   | ✅       | 1–50 chars, must be unique in org                             |
+| `display_name`     | string   | ❌       | Max 120 chars                                                 |
+| `address_line`     | string   | ❌       | Max 255 chars                                                 |
+| `area_id`          | int      | ❌       | Service area ID                                               |
+| `depot_id`         | int      | ❌       | Depot ID                                                      |
+| `latitude`         | float    | ❌       | GPS latitude                                                  |
+| `longitude`        | float    | ❌       | GPS longitude                                                 |
+| `capacity_liters`  | float    | ❌       | Physical capacity                                             |
+| `bin_height_cm`    | float    | ❌       | Default `60.0`, must be > 0                                   |
+| `dead_zone_cm`     | float    | ❌       | Default `5.0`, must be ≥ 0                                    |
+| `threshold_green`  | float    | ❌       | Default `50.0`, range 0–100. **Must be < `threshold_yellow`** |
+| `threshold_yellow` | float    | ❌       | Default `80.0`, range 0–100                                   |
+| `distance_factor`  | float    | ❌       | Default `0.5`, range 0–1                                      |
+| `status`           | string   | ❌       | Default `"active"`, max 20 chars                              |
+| `installed_at`     | datetime | ❌       | ISO datetime                                                  |
+| `last_service_at`  | datetime | ❌       | ISO datetime                                                  |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 101,
@@ -765,7 +827,7 @@ Driver profiles extend user accounts with operational metadata (license, home de
   "area_id": 5,
   "depot_id": 3,
   "latitude": 13.085,
-  "longitude": 80.210,
+  "longitude": 80.21,
   "capacity_liters": 120.0,
   "bin_height_cm": 80.0,
   "dead_zone_cm": 5.0,
@@ -848,10 +910,11 @@ Driver profiles extend user accounts with operational metadata (license, home de
 **Path Parameter:** `bin_id` (int)
 
 **Request Body (partial — all optional):**
+
 ```json
 {
   "display_name": "Updated Bin Name",
-  "latitude": 13.090,
+  "latitude": 13.09,
   "longitude": 80.215,
   "threshold_yellow": 85.0,
   "is_active": true
@@ -883,6 +946,7 @@ Same fields as create except `bin_code` cannot be changed via PATCH.
 **Query Parameters:** `limit` (default 50, max 100), `offset`
 
 **Response `200 OK`:**
+
 ```json
 {
   "total": 3,
@@ -919,6 +983,7 @@ IoT sensor devices mounted on bins. Each device communicates via MQTT.
 **Purpose:** Register one IoT device linked to a bin.
 
 **Request Body:**
+
 ```json
 {
   "bin_id": 101,
@@ -932,18 +997,19 @@ IoT sensor devices mounted on bins. Each device communicates via MQTT.
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `bin_id` | int | ✅ | Valid bin ID in the org |
-| `device_uid` | string | ✅ | 1–100 chars, unique identifier |
-| `mqtt_client_id` | string | ✅ | 1–100 chars, used in MQTT topic resolution |
-| `firmware_version` | string | ❌ | Max 50 chars |
-| `hardware_revision` | string | ❌ | Max 50 chars |
-| `status` | string | ❌ | Default `"online"`, max 20 chars |
-| `installed_at` | datetime | ❌ | ISO datetime |
-| `last_seen_at` | datetime | ❌ | ISO datetime |
+| Field               | Type     | Required | Constraints                                |
+| ------------------- | -------- | -------- | ------------------------------------------ |
+| `bin_id`            | int      | ✅       | Valid bin ID in the org                    |
+| `device_uid`        | string   | ✅       | 1–100 chars, unique identifier             |
+| `mqtt_client_id`    | string   | ✅       | 1–100 chars, used in MQTT topic resolution |
+| `firmware_version`  | string   | ❌       | Max 50 chars                               |
+| `hardware_revision` | string   | ❌       | Max 50 chars                               |
+| `status`            | string   | ❌       | Default `"online"`, max 20 chars           |
+| `installed_at`      | datetime | ❌       | ISO datetime                               |
+| `last_seen_at`      | datetime | ❌       | ISO datetime                               |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 55,
@@ -1010,6 +1076,7 @@ IoT sensor devices mounted on bins. Each device communicates via MQTT.
 **Purpose:** Partial update of device metadata.
 
 **Request Body (partial):**
+
 ```json
 {
   "firmware_version": "2.2.0",
@@ -1039,6 +1106,7 @@ Fields: `mqtt_client_id`, `firmware_version`, `hardware_revision`, `status`, `in
 **Purpose:** Assign or reassign a device to a bin. Records assignment history.
 
 **Request Body:**
+
 ```json
 {
   "bin_id": 102,
@@ -1047,13 +1115,14 @@ Fields: `mqtt_client_id`, `firmware_version`, `hardware_revision`, `status`, `in
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `bin_id` | int | ✅ | Target bin in the org |
-| `notes` | string | ❌ | Max 255 characters |
-| `active_from` | datetime | ❌ | Defaults to now |
+| Field         | Type     | Required | Constraints           |
+| ------------- | -------- | -------- | --------------------- |
+| `bin_id`      | int      | ✅       | Target bin in the org |
+| `notes`       | string   | ❌       | Max 255 characters    |
+| `active_from` | datetime | ❌       | Defaults to now       |
 
 **Response `200 OK`:**
+
 ```json
 {
   "id": 23,
@@ -1094,6 +1163,7 @@ Telemetry is the real-time sensor data coming from bins via MQTT.
 **Path Parameter:** `bin_code` (string) — The bin's unique `bin_code` (e.g. `"BIN-A001"`)
 
 **Response `200 OK`:**
+
 ```json
 {
   "bin_code": "BIN-A001",
@@ -1109,18 +1179,18 @@ Telemetry is the real-time sensor data coming from bins via MQTT.
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `bin_code` | string | The bin identifier |
-| `last_measured_at` | datetime/null | When last sensor reading was received |
-| `current_fill_pct` | float/null | Current fill percentage 0–100 |
-| `current_fill_rate_pct_per_min` | float/null | Rate of fill increase |
-| `current_ttf_min` | float/null | Time-to-full in minutes |
-| `current_priority_score` | float/null | Computed priority for routing |
-| `current_alert_level` | string/null | `"GREEN"`, `"YELLOW"`, `"RED"` |
-| `overflow_imminent` | bool | Whether overflow was flagged |
-| `device_connectivity_state` | string | `"online"` or `"offline"` |
-| `queued_count` | int | Number of queued messages |
+| Field                           | Type          | Description                           |
+| ------------------------------- | ------------- | ------------------------------------- |
+| `bin_code`                      | string        | The bin identifier                    |
+| `last_measured_at`              | datetime/null | When last sensor reading was received |
+| `current_fill_pct`              | float/null    | Current fill percentage 0–100         |
+| `current_fill_rate_pct_per_min` | float/null    | Rate of fill increase                 |
+| `current_ttf_min`               | float/null    | Time-to-full in minutes               |
+| `current_priority_score`        | float/null    | Computed priority for routing         |
+| `current_alert_level`           | string/null   | `"GREEN"`, `"YELLOW"`, `"RED"`        |
+| `overflow_imminent`             | bool          | Whether overflow was flagged          |
+| `device_connectivity_state`     | string        | `"online"` or `"offline"`             |
+| `queued_count`                  | int           | Number of queued messages             |
 
 **Error:** `404` if bin_code not found.
 
@@ -1138,6 +1208,7 @@ Telemetry is the real-time sensor data coming from bins via MQTT.
 | `limit` | int | 100 | 1–1000 |
 
 **Response `200 OK`:**
+
 ```json
 {
   "bin_code": "BIN-A001",
@@ -1165,6 +1236,7 @@ Items are returned in **descending order** (newest first).
 **Purpose:** Dashboard summary counters for all bins in the organization.
 
 **Response `200 OK`:**
+
 ```json
 {
   "total_bins": 150,
@@ -1177,15 +1249,15 @@ Items are returned in **descending order** (newest first).
 }
 ```
 
-| Field | Description |
-|---|---|
-| `total_bins` | All active bins in org |
-| `bins_with_state` | Bins that have received at least one telemetry reading |
-| `red_bins` | Bins at RED alert level (critically full) |
-| `yellow_bins` | Bins at YELLOW alert level (approaching full) |
-| `overflow_imminent_bins` | Bins with overflow flag set |
-| `offline_bins` | Bins with offline device status |
-| `open_alerts` | Total unresolved alerts |
+| Field                    | Description                                            |
+| ------------------------ | ------------------------------------------------------ |
+| `total_bins`             | All active bins in org                                 |
+| `bins_with_state`        | Bins that have received at least one telemetry reading |
+| `red_bins`               | Bins at RED alert level (critically full)              |
+| `yellow_bins`            | Bins at YELLOW alert level (approaching full)          |
+| `overflow_imminent_bins` | Bins with overflow flag set                            |
+| `offline_bins`           | Bins with offline device status                        |
+| `open_alerts`            | Total unresolved alerts                                |
 
 ---
 
@@ -1215,6 +1287,7 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 | `opened_to` | datetime | Filter by opened_at ≤ this timestamp |
 
 **Response `200 OK`:**
+
 ```json
 {
   "total": 17,
@@ -1247,11 +1320,11 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 
 **Alert Types:**
 
-| `alert_type` | Trigger |
-|---|---|
-| `fill_threshold` | Bin fill level crossed GREEN or YELLOW threshold |
-| `overflow_imminent` | Device reported overflow imminent flag |
-| `device_offline` | No telemetry received beyond stale timeout |
+| `alert_type`        | Trigger                                          |
+| ------------------- | ------------------------------------------------ |
+| `fill_threshold`    | Bin fill level crossed GREEN or YELLOW threshold |
+| `overflow_imminent` | Device reported overflow imminent flag           |
+| `device_offline`    | No telemetry received beyond stale timeout       |
 
 ---
 
@@ -1272,13 +1345,14 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 **Path Parameter:** `alert_id` (int)
 
 **Request Body:**
+
 ```json
 { "note": "Dispatching a truck to this location" }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `note` | string | ❌ | Max 1000 characters |
+| Field  | Type   | Required | Constraints         |
+| ------ | ------ | -------- | ------------------- |
+| `note` | string | ❌       | Max 1000 characters |
 
 **Response `200 OK`:** Updated `AlertResponse` with `acknowledged_at` populated and `status: "acknowledged"`.
 
@@ -1307,6 +1381,7 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 **Path Parameter:** `alert_id` (int)
 
 **Request Body:**
+
 ```json
 {
   "assigned_to_user_id": 15,
@@ -1314,10 +1389,10 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `assigned_to_user_id` | int/null | ❌ | The user to assign to. Pass `null` to unassign |
-| `note` | string | ❌ | Max 1000 characters |
+| Field                 | Type     | Required | Description                                    |
+| --------------------- | -------- | -------- | ---------------------------------------------- |
+| `assigned_to_user_id` | int/null | ❌       | The user to assign to. Pass `null` to unassign |
+| `note`                | string   | ❌       | Max 1000 characters                            |
 
 **Response `200 OK`:** Updated `AlertResponse` with `assigned_to_user_id` set.
 
@@ -1332,6 +1407,7 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 **Query Parameters:** `limit` (default 50, max 100), `offset`
 
 **Response `200 OK`:**
+
 ```json
 {
   "total": 3,
@@ -1360,13 +1436,13 @@ Alerts are automatically created by the MQTT ingestion pipeline. Users can ackno
 }
 ```
 
-| Event Type | Trigger |
-|---|---|
-| `opened` | Alert first created by MQTT ingestion |
-| `updated` | Telemetry updated the alert (fill increase) |
-| `resolved` | Alert auto-resolved or manually resolved |
-| `acknowledged` | User acknowledged the alert |
-| `assigned` | Alert assigned/unassigned to a user |
+| Event Type     | Trigger                                     |
+| -------------- | ------------------------------------------- |
+| `opened`       | Alert first created by MQTT ingestion       |
+| `updated`      | Telemetry updated the alert (fill increase) |
+| `resolved`     | Alert auto-resolved or manually resolved    |
+| `acknowledged` | User acknowledged the alert                 |
+| `assigned`     | Alert assigned/unassigned to a user         |
 
 ---
 
@@ -1389,6 +1465,7 @@ Operations manage the collection workflow: vehicles → shifts → routes → as
 **Purpose:** Register a waste collection vehicle.
 
 **Request Body:**
+
 ```json
 {
   "vehicle_no": "TN-09-AB-1234",
@@ -1398,14 +1475,15 @@ Operations manage the collection workflow: vehicles → shifts → routes → as
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `vehicle_no` | string | ✅ | 1–50 chars, unique in org |
-| `vehicle_type` | string | ❌ | Max 40 chars (e.g. `"compactor"`, `"tipper"`) |
-| `capacity_kg` | float | ❌ | Must be > 0 |
-| `status` | string | ❌ | Default `"active"`, max 20 chars |
+| Field          | Type   | Required | Constraints                                   |
+| -------------- | ------ | -------- | --------------------------------------------- |
+| `vehicle_no`   | string | ✅       | 1–50 chars, unique in org                     |
+| `vehicle_type` | string | ❌       | Max 40 chars (e.g. `"compactor"`, `"tipper"`) |
+| `capacity_kg`  | float  | ❌       | Must be > 0                                   |
+| `status`       | string | ❌       | Default `"active"`, max 20 chars              |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 9,
@@ -1465,6 +1543,7 @@ Operations manage the collection workflow: vehicles → shifts → routes → as
 **Purpose:** Pre-schedule a driver's working shift.
 
 **Request Body:**
+
 ```json
 {
   "driver_user_id": 15,
@@ -1475,15 +1554,16 @@ Operations manage the collection workflow: vehicles → shifts → routes → as
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `driver_user_id` | int | ✅ | Valid driver user ID, must be > 0 |
-| `vehicle_id` | int | ❌ | Optional vehicle assignment |
-| `planned_start` | datetime | ✅ | ISO datetime |
-| `planned_end` | datetime | ✅ | Must be after `planned_start` |
-| `notes` | string | ❌ | Max 255 characters |
+| Field            | Type     | Required | Constraints                       |
+| ---------------- | -------- | -------- | --------------------------------- |
+| `driver_user_id` | int      | ✅       | Valid driver user ID, must be > 0 |
+| `vehicle_id`     | int      | ❌       | Optional vehicle assignment       |
+| `planned_start`  | datetime | ✅       | ISO datetime                      |
+| `planned_end`    | datetime | ✅       | Must be after `planned_start`     |
+| `notes`          | string   | ❌       | Max 255 characters                |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 14,
@@ -1575,6 +1655,7 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 **Purpose:** Generate an optimized route plan preview. Use this to show operators what a route would look like before creating it.
 
 **Request Body:**
+
 ```json
 {
   "route_date": "2026-04-18",
@@ -1592,22 +1673,23 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 }
 ```
 
-| Field | Type | Required | Constraints | Description |
-|---|---|---|---|---|
-| `route_date` | date | ✅ | ISO date | The date to plan the route for |
-| `depot_id` | int | ❌ | Must be > 0 | Starting depot for route optimization |
-| `driver_user_id` | int | ❌ | Must be > 0 | Filter by driver's home depot for start point |
-| `include_bin_ids` | int[] | ❌ | Non-empty if provided | Force-include specific bins |
-| `max_stops` | int | ❌ | 1–500, default 60 | Max stops in route |
-| `min_fill_pct` | float | ❌ | 0–100, default 70.0 | Only include bins at or above this fill % |
-| `overflow_only` | bool | ❌ | Default `false` | Only include bins with overflow flag |
-| `target_shift_minutes` | int | ❌ | 60–1440, default 480 | Target shift duration in minutes |
-| `avg_speed_kmph` | float | ❌ | 0–80, default 22.0 | Assumed travel speed |
-| `service_minutes_per_stop` | float | ❌ | 0–60, default 4.0 | Time to service each bin |
-| `use_multi_vehicle` | bool | ❌ | Default `false` | Enable multi-vehicle optimization |
-| `vehicle_ids` | int[] | ❌ | Non-empty if provided | Vehicles available for multi-vehicle |
+| Field                      | Type  | Required | Constraints           | Description                                   |
+| -------------------------- | ----- | -------- | --------------------- | --------------------------------------------- |
+| `route_date`               | date  | ✅       | ISO date              | The date to plan the route for                |
+| `depot_id`                 | int   | ❌       | Must be > 0           | Starting depot for route optimization         |
+| `driver_user_id`           | int   | ❌       | Must be > 0           | Filter by driver's home depot for start point |
+| `include_bin_ids`          | int[] | ❌       | Non-empty if provided | Force-include specific bins                   |
+| `max_stops`                | int   | ❌       | 1–500, default 60     | Max stops in route                            |
+| `min_fill_pct`             | float | ❌       | 0–100, default 70.0   | Only include bins at or above this fill %     |
+| `overflow_only`            | bool  | ❌       | Default `false`       | Only include bins with overflow flag          |
+| `target_shift_minutes`     | int   | ❌       | 60–1440, default 480  | Target shift duration in minutes              |
+| `avg_speed_kmph`           | float | ❌       | 0–80, default 22.0    | Assumed travel speed                          |
+| `service_minutes_per_stop` | float | ❌       | 0–60, default 4.0     | Time to service each bin                      |
+| `use_multi_vehicle`        | bool  | ❌       | Default `false`       | Enable multi-vehicle optimization             |
+| `vehicle_ids`              | int[] | ❌       | Non-empty if provided | Vehicles available for multi-vehicle          |
 
 **Response `200 OK`:**
+
 ```json
 {
   "algorithm": "greedy_nearest_neighbor",
@@ -1630,7 +1712,7 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
       "bin_id": 101,
       "bin_code": "BIN-A001",
       "latitude": 13.085,
-      "longitude": 80.210,
+      "longitude": 80.21,
       "fill_pct": 82.3,
       "priority_score": 0.94,
       "estimated_load_kg": 98.5,
@@ -1665,6 +1747,7 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 > Typically used after reviewing `POST /operations/routes/plan` and confirming the stops.
 
 **Request Body:**
+
 ```json
 {
   "route_code": "ROUTE-2026-04-18-N01",
@@ -1675,15 +1758,16 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `route_code` | string | ✅ | 1–60 chars, unique in org |
-| `route_date` | date | ✅ | ISO date |
-| `depot_id` | int | ❌ | Must be > 0 |
-| `driver_user_id` | int | ❌ | Must be > 0 |
-| `stop_bin_ids` | int[] | ✅ | 1–500 items ordered by sequence |
+| Field            | Type   | Required | Constraints                     |
+| ---------------- | ------ | -------- | ------------------------------- |
+| `route_code`     | string | ✅       | 1–60 chars, unique in org       |
+| `route_date`     | date   | ✅       | ISO date                        |
+| `depot_id`       | int    | ❌       | Must be > 0                     |
+| `driver_user_id` | int    | ❌       | Must be > 0                     |
+| `stop_bin_ids`   | int[]  | ✅       | 1–500 items ordered by sequence |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 77,
@@ -1751,13 +1835,14 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 > After publishing, assignments can be created and drivers can accept them.
 
 **Request Body:**
+
 ```json
 { "driver_user_id": 15 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `driver_user_id` | int | ❌ | If provided, validates driver's home depot for start-point |
+| Field            | Type | Required | Description                                                |
+| ---------------- | ---- | -------- | ---------------------------------------------------------- |
+| `driver_user_id` | int  | ❌       | If provided, validates driver's home depot for start-point |
 
 **Response `200 OK`:** Updated `RouteResponse` with `status: "published"`.
 
@@ -1800,6 +1885,7 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 **Purpose:** Assign a driver (and optionally a vehicle) to a published or in-progress route.
 
 **Request Body:**
+
 ```json
 {
   "driver_user_id": 15,
@@ -1807,12 +1893,13 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `driver_user_id` | int | ✅ | Must be > 0 |
-| `vehicle_id` | int | ❌ | Must be > 0 if provided |
+| Field            | Type | Required | Constraints             |
+| ---------------- | ---- | -------- | ----------------------- |
+| `driver_user_id` | int  | ✅       | Must be > 0             |
+| `vehicle_id`     | int  | ❌       | Must be > 0 if provided |
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 45,
@@ -1866,13 +1953,14 @@ This is a **non-persisting preview** endpoint. It calculates an optimized route 
 **Purpose:** Reject a pending assignment with a mandatory reason.
 
 **Request Body:**
+
 ```json
 { "reject_reason": "Vehicle breakdown, cannot complete shift" }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `reject_reason` | string | ✅ | 1–255 characters |
+| Field           | Type   | Required | Constraints      |
+| --------------- | ------ | -------- | ---------------- |
+| `reject_reason` | string | ✅       | 1–255 characters |
 
 **Response `200 OK`:** Updated `RouteAssignmentResponse` with `status: "rejected"` and `rejected_at` set.
 
@@ -1897,6 +1985,7 @@ Route stops are the individual collection points within a route.
 > **Driver Scoping:** Drivers can only view stops for routes they are assigned to. Returns `403` otherwise.
 
 **Response `200 OK`:**
+
 ```json
 {
   "total": 5,
@@ -1937,6 +2026,7 @@ Route stops are the individual collection points within a route.
 | `Idempotency-Key` | Optional unique key to prevent duplicate submissions on retry |
 
 **Request Body:**
+
 ```json
 {
   "actual_arrival": "2026-04-18T06:28:00",
@@ -1946,12 +2036,12 @@ Route stops are the individual collection points within a route.
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `actual_arrival` | datetime | ❌ | Defaults to server time if omitted |
-| `gps_latitude` | float | ❌ | Driver's GPS latitude at time of action |
-| `gps_longitude` | float | ❌ | Driver's GPS longitude at time of action |
-| `notes` | string | ❌ | Optional note |
+| Field            | Type     | Required | Description                              |
+| ---------------- | -------- | -------- | ---------------------------------------- |
+| `actual_arrival` | datetime | ❌       | Defaults to server time if omitted       |
+| `gps_latitude`   | float    | ❌       | Driver's GPS latitude at time of action  |
+| `gps_longitude`  | float    | ❌       | Driver's GPS longitude at time of action |
+| `notes`          | string   | ❌       | Optional note                            |
 
 **Response `200 OK`:** Updated `RouteStopResponse` with `status: "arrived"` and `actual_arrival` set.
 
@@ -1965,6 +2055,7 @@ Route stops are the individual collection points within a route.
 **Headers:** `Idempotency-Key` (optional)
 
 **Request Body:**
+
 ```json
 {
   "actual_departure": "2026-04-18T06:35:00",
@@ -1977,15 +2068,15 @@ Route stops are the individual collection points within a route.
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `actual_departure` | datetime | ❌ | Defaults to server time |
-| `fill_before_pct` | float | ❌ | 0–100, fill % before collection |
-| `fill_after_pct` | float | ❌ | 0–100, fill % after collection |
-| `gps_latitude` | float | ❌ | GPS latitude |
-| `gps_longitude` | float | ❌ | GPS longitude |
-| `notes` | string | ❌ | Optional note |
-| `photo_url` | string | ❌ | Max 255 chars, URL to evidence photo |
+| Field              | Type     | Required | Constraints                          |
+| ------------------ | -------- | -------- | ------------------------------------ |
+| `actual_departure` | datetime | ❌       | Defaults to server time              |
+| `fill_before_pct`  | float    | ❌       | 0–100, fill % before collection      |
+| `fill_after_pct`   | float    | ❌       | 0–100, fill % after collection       |
+| `gps_latitude`     | float    | ❌       | GPS latitude                         |
+| `gps_longitude`    | float    | ❌       | GPS longitude                        |
+| `notes`            | string   | ❌       | Optional note                        |
+| `photo_url`        | string   | ❌       | Max 255 chars, URL to evidence photo |
 
 **Response `200 OK`:** Updated `RouteStopResponse` with `status: "serviced"`.
 
@@ -1999,6 +2090,7 @@ Route stops are the individual collection points within a route.
 **Headers:** `Idempotency-Key` (optional)
 
 **Request Body:**
+
 ```json
 {
   "reason": "Road blocked due to construction",
@@ -2009,13 +2101,13 @@ Route stops are the individual collection points within a route.
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `reason` | string | ✅ | 1–255 characters |
-| `actual_departure` | datetime | ❌ | Defaults to server time |
-| `gps_latitude` | float | ❌ | GPS latitude |
-| `gps_longitude` | float | ❌ | GPS longitude |
-| `notes` | string | ❌ | Additional notes |
+| Field              | Type     | Required | Constraints             |
+| ------------------ | -------- | -------- | ----------------------- |
+| `reason`           | string   | ✅       | 1–255 characters        |
+| `actual_departure` | datetime | ❌       | Defaults to server time |
+| `gps_latitude`     | float    | ❌       | GPS latitude            |
+| `gps_longitude`    | float    | ❌       | GPS longitude           |
+| `notes`            | string   | ❌       | Additional notes        |
 
 **Response `200 OK`:** Updated `RouteStopResponse` with `status: "skipped"` and `skip_reason` set.
 
@@ -2040,6 +2132,7 @@ All analytics routes require `from` and `to` timestamp parameters.
 | `to` | datetime | ✅ | End of time range (ISO datetime) |
 
 **Response `200 OK`:**
+
 ```json
 {
   "from_ts": "2026-04-01T00:00:00",
@@ -2062,6 +2155,7 @@ All analytics routes require `from` and `to` timestamp parameters.
 **Query Parameters:** `from` (datetime, required), `to` (datetime, required)
 
 **Response `200 OK`:**
+
 ```json
 {
   "from_ts": "2026-04-01T00:00:00",
@@ -2087,6 +2181,7 @@ All analytics routes require `from` and `to` timestamp parameters.
 **Query Parameters:** `from` (datetime, required), `to` (datetime, required)
 
 **Response `200 OK`:**
+
 ```json
 {
   "from_ts": "2026-04-01T00:00:00",
@@ -2124,6 +2219,7 @@ In-app notifications are per-user alerts for events like new assignments, route 
 | `event_type` | string | — | Filter by event type |
 
 **Response `200 OK`:**
+
 ```json
 {
   "total": 8,
@@ -2171,6 +2267,7 @@ In-app notifications are per-user alerts for events like new assignments, route 
 **Request Body:** None
 
 **Response `200 OK`:**
+
 ```json
 { "updated": 8 }
 ```
@@ -2186,6 +2283,7 @@ In-app notifications are per-user alerts for events like new assignments, route 
 **Media Type:** `text/event-stream`
 
 **Events:**
+
 ```
 event: connected
 data: {"type":"connected","user_id":15}
@@ -2212,10 +2310,12 @@ data: {}
 **Purpose:** WebSocket stream delivering real-time bin state updates for all bins in the organization (pushed whenever a new MQTT telemetry message is ingested).
 
 **Auth:** Pass JWT as either:
+
 - Query parameter: `ws://host/api/v1/realtime/ws/bin-states?token=<access_token>`
 - Or `Authorization: Bearer <token>` header on upgrade
 
 **On Connect, server sends:**
+
 ```json
 {
   "event": "connected",
@@ -2226,6 +2326,7 @@ data: {}
 ```
 
 **Subsequent Messages (pushed by server on each telemetry update):**
+
 ```json
 {
   "event": "bin_state_update",
@@ -2261,12 +2362,14 @@ This route is used by the MQTT bridge/adapter service. Frontend apps typically *
 **Purpose:** Ingest one MQTT sensor message and trigger immediate telemetry evaluation and alert lifecycle updates.
 
 **Headers:**
+
 ```
 X-API-Key: <mqtt_ingest_api_key>
 Content-Type: application/json
 ```
 
 **Request Body:**
+
 ```json
 {
   "topic": "smartbin/BIN-A001/data",
@@ -2286,13 +2389,13 @@ Content-Type: application/json
 }
 ```
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `topic` | string | ✅ | Pattern: `smartbin/{bin_token}/data` or `smartbin/{bin_token}/alert` |
-| `payload` | object | ✅ | Key-value telemetry data |
-| `qos` | int | ❌ | Default `0`, range 0–2 |
-| `retain` | bool | ❌ | Default `false` |
-| `received_at` | datetime | ❌ | Defaults to server time |
+| Field         | Type     | Required | Constraints                                                          |
+| ------------- | -------- | -------- | -------------------------------------------------------------------- |
+| `topic`       | string   | ✅       | Pattern: `smartbin/{bin_token}/data` or `smartbin/{bin_token}/alert` |
+| `payload`     | object   | ✅       | Key-value telemetry data                                             |
+| `qos`         | int      | ❌       | Default `0`, range 0–2                                               |
+| `retain`      | bool     | ❌       | Default `false`                                                      |
+| `received_at` | datetime | ❌       | Defaults to server time                                              |
 
 **Accepted Topic Patterns:**
 | Pattern | Purpose |
@@ -2313,6 +2416,7 @@ Content-Type: application/json
 | `unix_s` / `unix_ms` / `uptime_s` | Timestamp fields (one is used for inference) |
 
 **Response `201 Created`:**
+
 ```json
 {
   "status": "ok",
@@ -2336,18 +2440,19 @@ Content-Type: application/json
 
 ## 17. Error Codes Reference
 
-| HTTP Status | Meaning | Common Cause |
-|---|---|---|
-| `200 OK` | Success | — |
-| `201 Created` | Resource created | POST endpoints |
-| `400 Bad Request` | Validation failed | Missing required fields, constraint violations |
-| `401 Unauthorized` | Not authenticated | Missing/expired/invalid JWT or API key |
-| `403 Forbidden` | Not authorized | Wrong role, driver accessing another driver's data |
-| `404 Not Found` | Resource not found | Invalid ID, not in org |
-| `409 Conflict` | Duplicate / constraint conflict | Duplicate code/email, last-admin protection |
-| `422 Unprocessable Entity` | Schema validation failure | FastAPI automatic Pydantic validation error |
+| HTTP Status                | Meaning                         | Common Cause                                       |
+| -------------------------- | ------------------------------- | -------------------------------------------------- |
+| `200 OK`                   | Success                         | —                                                  |
+| `201 Created`              | Resource created                | POST endpoints                                     |
+| `400 Bad Request`          | Validation failed               | Missing required fields, constraint violations     |
+| `401 Unauthorized`         | Not authenticated               | Missing/expired/invalid JWT or API key             |
+| `403 Forbidden`            | Not authorized                  | Wrong role, driver accessing another driver's data |
+| `404 Not Found`            | Resource not found              | Invalid ID, not in org                             |
+| `409 Conflict`             | Duplicate / constraint conflict | Duplicate code/email, last-admin protection        |
+| `422 Unprocessable Entity` | Schema validation failure       | FastAPI automatic Pydantic validation error        |
 
 **Error Response Shape:**
+
 ```json
 {
   "detail": "bin not found"
@@ -2355,6 +2460,7 @@ Content-Type: application/json
 ```
 
 For `422` validation errors:
+
 ```json
 {
   "detail": [
@@ -2464,4 +2570,4 @@ Generate a unique UUID per action. If the same key is sent twice, the server wil
 
 ---
 
-*Document generated from source code on 2026-04-18. Covers backend version at commit state as of ROUTES_IMPLEMENTATION_STATUS.md dated 2026-04-17.*
+_Document generated from source code on 2026-04-18. Covers backend version at commit state as of ROUTES_IMPLEMENTATION_STATUS.md dated 2026-04-17._

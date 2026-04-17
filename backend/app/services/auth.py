@@ -114,7 +114,7 @@ async def refresh_access_token(db: AsyncSession, *, refresh_token: str) -> dict:
 
     return {
         "access_token": _build_access_token(user, role_keys),
-        "refresh_token": refresh_token,
+        "refresh_token": _build_refresh_token(user, role_keys),
         "token_type": "bearer",
         "expires_in_seconds": int(settings.access_token_expire_minutes * 60),
         "role_keys": role_keys,
@@ -174,6 +174,39 @@ async def create_driver_user(
     db.add(user_role)
     await db.commit()
     await db.refresh(user)
+
+    role_keys = await _load_role_keys(db, user.id)
+    return {
+        "id": user.id,
+        "org_id": user.org_id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "phone": user.phone,
+        "status": user.status,
+        "is_active": bool(user.is_active),
+        "role_keys": role_keys,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+    }
+
+
+async def get_authenticated_user_summary(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    org_id: int,
+) -> dict:
+    """Return the current authenticated user summary for frontend session bootstrap."""
+    user = (
+        await db.execute(
+            select(User)
+            .where(User.id == user_id, User.org_id == org_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if user is None or not user.is_active:
+        raise ValueError("user not found or inactive")
 
     role_keys = await _load_role_keys(db, user.id)
     return {

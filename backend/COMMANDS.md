@@ -306,6 +306,7 @@ source .venv/bin/activate              # Unix
 docker-compose up -d                    # Start PostgreSQL
 alembic upgrade head                    # Apply migrations
 alembic revision --autogenerate -m "msg"
+.venv\Scripts\python -m app.db.seed_initial_data  # Seed initial required auth data
 
 # Run API
 fastapi dev app/main.py

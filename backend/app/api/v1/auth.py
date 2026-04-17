@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps.auth import AuthUser, require_authority_user
+from app.api.deps.auth import AuthUser, get_current_user, require_authority_user
 from app.db.database import get_db
 from app.schemas.auth import (
     CreateDriverRequest,
@@ -13,7 +13,12 @@ from app.schemas.auth import (
     TokenRefreshRequest,
     UserSummaryResponse,
 )
-from app.services.auth import create_driver_user, login_user, refresh_access_token
+from app.services.auth import (
+    create_driver_user,
+    get_authenticated_user_summary,
+    login_user,
+    refresh_access_token,
+)
 
 router = APIRouter(prefix="/auth")
 
@@ -48,6 +53,19 @@ async def refresh_token_route(
     except ValueError as exc:
         raise _raise_for_value_error(exc) from exc
     return LoginResponse(**data)
+
+
+@router.get("/me", response_model=UserSummaryResponse)
+async def me_route(
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+) -> UserSummaryResponse:
+    """Return profile + role summary for current authenticated user."""
+    try:
+        data = await get_authenticated_user_summary(db, user_id=user.id, org_id=user.org_id)
+    except ValueError as exc:
+        raise _raise_for_value_error(exc) from exc
+    return UserSummaryResponse(**data)
 
 
 @router.post("/drivers", response_model=UserSummaryResponse, status_code=status.HTTP_201_CREATED)
