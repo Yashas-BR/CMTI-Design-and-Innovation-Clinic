@@ -1,10 +1,10 @@
 """Core IoT and operations models used by MQTT ingestion and telemetry queries."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -66,6 +66,177 @@ class UserRole(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class Depot(Base, TimestampMixin):
+    """Organization depot master data."""
+
+    __tablename__ = "depots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class ServiceArea(Base, TimestampMixin):
+    """Organization service area polygons and centers."""
+
+    __tablename__ = "service_areas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    center_latitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    center_longitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    boundary_geojson: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    priority_weight: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("1.00"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class DriverProfile(Base, TimestampMixin):
+    """Driver-specific profile data used for shift and route context."""
+
+    __tablename__ = "driver_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    license_no: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    license_expiry: Mapped[date | None] = mapped_column(Date, nullable=True)
+    home_depot_id: Mapped[int | None] = mapped_column(ForeignKey("depots.id", ondelete="SET NULL"), nullable=True)
+    employment_status: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+class Vehicle(Base, TimestampMixin):
+    """Collection vehicle table."""
+
+    __tablename__ = "vehicles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    vehicle_no: Mapped[str] = mapped_column(String(50), nullable=False)
+    vehicle_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    capacity_kg: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class DriverShift(Base, TimestampMixin):
+    """Driver shift planning and execution."""
+
+    __tablename__ = "driver_shifts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    driver_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
+    planned_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    planned_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actual_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class Route(Base, TimestampMixin):
+    """Route planning and execution entity."""
+
+    __tablename__ = "routes"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    route_code: Mapped[str] = mapped_column(String(60), nullable=False)
+    route_date: Mapped[date] = mapped_column(Date, nullable=False)
+    depot_id: Mapped[int | None] = mapped_column(ForeignKey("depots.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    total_distance_km: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    estimated_duration_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    optimization_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("optimization_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class RouteAssignment(Base):
+    """Driver and vehicle assignment for one route."""
+
+    __tablename__ = "route_assignments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    route_id: Mapped[int] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"), nullable=False)
+    driver_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
+    assigned_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+class RouteStop(Base):
+    """Ordered route stops and their execution state."""
+
+    __tablename__ = "route_stops"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    route_id: Mapped[int] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"), nullable=False)
+    stop_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id", ondelete="RESTRICT"), nullable=False)
+    planned_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    planned_service_minutes: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    priority_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    actual_arrival: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_departure: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    skip_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class CollectionEvent(Base):
+    """Stop-level evidence and collection timeline events."""
+
+    __tablename__ = "collection_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id", ondelete="RESTRICT"), nullable=False)
+    route_id: Mapped[int | None] = mapped_column(ForeignKey("routes.id", ondelete="SET NULL"), nullable=True)
+    route_stop_id: Mapped[int | None] = mapped_column(ForeignKey("route_stops.id", ondelete="SET NULL"), nullable=True)
+    driver_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fill_before_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    fill_after_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    gps_latitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    gps_longitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 7), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AuditLog(Base):
+    """Audit log rows for action tracing and idempotency key replay protection."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    before_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    after_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AlertRule(Base, TimestampMixin):

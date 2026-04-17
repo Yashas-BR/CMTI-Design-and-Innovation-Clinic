@@ -34,6 +34,31 @@ from .mqtt import (
 	TelemetryLiveSummaryResponse,
 	TelemetryPoint,
 )
+from .operations_assignment import (
+	RouteAssignmentCreateRequest,
+	RouteAssignmentListResponse,
+	RouteAssignmentRejectRequest,
+	RouteAssignmentResponse,
+)
+from .operations_route import (
+	RouteDraftCreateRequest,
+	RouteListResponse,
+	RoutePlanRequest,
+	RoutePlanResponse,
+	RoutePlanStopResponse,
+	RoutePublishRequest,
+	RouteResponse,
+	StartPointResponse,
+)
+from .operations_shift import ShiftCreateRequest, ShiftListResponse, ShiftResponse
+from .operations_stop import (
+	RouteStopListResponse,
+	RouteStopResponse,
+	StopArriveRequest,
+	StopServiceRequest,
+	StopSkipRequest,
+)
+from .operations_vehicle import VehicleCreateRequest, VehicleListResponse, VehicleResponse, VehicleUpdateRequest
 from .users import UserListResponse, UserPasswordResetRequest, UserResponse, UserRoleMutationRequest
 
 __all__ = [
@@ -71,4 +96,28 @@ __all__ = [
 	"TelemetryLatestResponse",
 	"TelemetryHistoryResponse",
 	"TelemetryLiveSummaryResponse",
+	"VehicleCreateRequest",
+	"VehicleUpdateRequest",
+	"VehicleResponse",
+	"VehicleListResponse",
+	"ShiftCreateRequest",
+	"ShiftResponse",
+	"ShiftListResponse",
+	"RoutePlanRequest",
+	"RoutePlanStopResponse",
+	"RoutePlanResponse",
+	"RouteDraftCreateRequest",
+	"RoutePublishRequest",
+	"StartPointResponse",
+	"RouteResponse",
+	"RouteListResponse",
+	"RouteAssignmentCreateRequest",
+	"RouteAssignmentRejectRequest",
+	"RouteAssignmentResponse",
+	"RouteAssignmentListResponse",
+	"StopArriveRequest",
+	"StopServiceRequest",
+	"StopSkipRequest",
+	"RouteStopResponse",
+	"RouteStopListResponse",
 ]

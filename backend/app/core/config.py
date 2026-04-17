@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     mqtt_allow_insecure_tls: bool = True
     mqtt_client_id_prefix: str = "smart_waste_backend"
 
+    # Route optimization matrix provider
+    route_matrix_provider: str = "osrm"
+    route_matrix_fallback: str = "haversine"
+    route_matrix_osrm_base_url: str = "http://router.project-osrm.org"
+    route_matrix_osrm_profile: str = "driving"
+    route_matrix_timeout_seconds: float = 8.0
+    route_matrix_local_graph_file: str = ""
+
     class Config:
         """Pydantic config."""
 
