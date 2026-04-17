@@ -1,13 +1,16 @@
-"""Phase 1 prototype for IoT-based smart waste monitoring.
+"""Phase 2 prototype for IoT-based smart waste monitoring.
 
 This script simulates distance readings for 5 retrofit-enabled bins,
-calculates fill percentage, and assigns status labels.
+calculates fill percentage, assigns status labels, prints a dashboard
+table, and visualizes fill level using a bar chart.
 """
 
 from __future__ import annotations
 
 import random
 from typing import Dict, List
+
+import matplotlib.pyplot as plt
 
 
 # Project constants for simulation
@@ -65,26 +68,46 @@ def build_records() -> List[Dict[str, float | str]]:
     return enriched_records
 
 
-def print_phase1_output(records: List[Dict[str, float | str]]) -> None:
-    """Print simple Phase 1 sanity output for each bin."""
-    print("Phase 1: Simulated Smart Bin Data")
-    print("-" * 62)
-    print(f"{'Bin_ID':<8}{'Distance_cm':<14}{'Fill_percent':<14}{'Status':<10}")
-    print("-" * 62)
+def print_table(records: List[Dict[str, float | str]]) -> None:
+    """Print clean terminal dashboard table with required columns."""
+    print("Smart Waste Bin Dashboard")
+    print("-" * 40)
+    print(f"{'Bin_ID':<10}{'Fill%':<12}{'Status':<10}")
+    print("-" * 40)
 
     for row in records:
-        print(
-            f"{row['Bin_ID']:<8}"
-            f"{row['Distance_cm']:<14.2f}"
-            f"{row['Fill_percent']:<14.2f}"
-            f"{row['Status']:<10}"
+        print(f"{row['Bin_ID']:<10}{row['Fill_percent']:<12.2f}{row['Status']:<10}")
+
+
+def plot_chart(records: List[Dict[str, float | str]]) -> None:
+    """Plot fill percentage bar chart with value labels."""
+    bin_ids = [str(row["Bin_ID"]) for row in records]
+    fill_values = [float(row["Fill_percent"]) for row in records]
+
+    bars = plt.bar(bin_ids, fill_values, color="#2E8B57", edgecolor="black")
+    plt.title("Smart Waste Bin Fill Levels")
+    plt.xlabel("Bin ID")
+    plt.ylabel("Fill Percentage (%)")
+    plt.ylim(0, 100)
+
+    for bar, value in zip(bars, fill_values):
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            value + 1,
+            f"{value:.1f}%",
+            ha="center",
+            va="bottom",
         )
+
+    plt.tight_layout()
+    plt.show()
 
 
 def main() -> None:
-    """Run Phase 1 simulation workflow."""
+    """Run Phase 2 simulation workflow."""
     records = build_records()
-    print_phase1_output(records)
+    print_table(records)
+    plot_chart(records)
 
 
 if __name__ == "__main__":
