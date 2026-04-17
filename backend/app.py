@@ -29,6 +29,13 @@ BIN_IDS = ["B1", "B2", "B3", "B4", "B5"]
 MIN_DISTANCE_CM = 5
 MAX_DISTANCE_CM = 50
 WARDS = ["Ward-A", "Ward-B", "Ward-C", "Ward-D", "Ward-E"]
+BIN_LOCATIONS = {
+    "B1": {"latitude": 12.9716, "longitude": 77.5946, "location": "Central Ward"},
+    "B2": {"latitude": 12.973, "longitude": 77.5982, "location": "Market Street"},
+    "B3": {"latitude": 12.9698, "longitude": 77.6011, "location": "Lake Road"},
+    "B4": {"latitude": 12.9677, "longitude": 77.5967, "location": "Depot Lane"},
+    "B5": {"latitude": 12.9752, "longitude": 77.5931, "location": "South Junction"},
+}
 
 DRIVER_ASSIGNMENTS = {
     "driverA": ["B1", "B2", "B3"],
@@ -57,6 +64,9 @@ GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 class BinRecord:
     bin_id: str
     ward: str
+    latitude: float
+    longitude: float
+    location: str
     distance_cm: float
     fill_percent: float
     status: str
@@ -164,6 +174,9 @@ def generate_data(seed: int, base_fill_rate: float) -> List[BinRecord]:
             BinRecord(
                 bin_id=bin_id,
                 ward=WARDS[idx],
+                latitude=BIN_LOCATIONS[bin_id]["latitude"],
+                longitude=BIN_LOCATIONS[bin_id]["longitude"],
+                location=BIN_LOCATIONS[bin_id]["location"],
                 distance_cm=distance_cm,
                 fill_percent=fill_percent,
                 status=status,
@@ -186,6 +199,9 @@ def records_to_rows(records: List[BinRecord]) -> List[Dict[str, Any]]:
             {
                 "Bin_ID": rec.bin_id,
                 "Ward": rec.ward,
+                "Latitude": rec.latitude,
+                "Longitude": rec.longitude,
+                "Location": rec.location,
                 "Fill%": rec.fill_percent,
                 "Status": rec.status,
                 "Fill_Rate(%/hr)": rec.fill_rate_per_hour,
@@ -215,6 +231,9 @@ def route_plan(records: List[BinRecord], threshold: float) -> List[Dict[str, Any
             {
                 "Stop": idx,
                 "Bin_ID": rec.bin_id,
+                "Latitude": rec.latitude,
+                "Longitude": rec.longitude,
+                "Location": rec.location,
                 "Priority": rec.priority_score,
                 "Distance_from_Depot(km)": rec.distance_from_depot_km,
             }

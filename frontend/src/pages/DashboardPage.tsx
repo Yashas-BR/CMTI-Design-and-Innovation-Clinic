@@ -17,6 +17,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import Tabs from '@/components/Tabs'
 import DataTable from '@/components/DataTable'
+import BinMap from '@/components/BinMap'
 import FillChart from '@/components/FillChart'
 import MetricsRow from '@/components/MetricsRow'
 import type {
@@ -218,6 +219,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                   monitoring={(
                     <>
                       <h2 className="text-lg font-semibold">Live Bin Monitoring</h2>
+                      <BinMap rows={data.rows} title="Dustbin Locations & Fill Status" />
                       <DataTable rows={data.rows} emptyMessage="No monitoring data available." />
                       <FillChart rows={data.rows} />
                     </>
@@ -246,44 +248,47 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                     </>
                   )}
                   route={(
-                    <Card className="border-white/70 bg-white/75 shadow-sm">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <Route className="h-4 w-4" />
-                          Recommended Collection Order
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {route.plan?.length ? (
-                          <div className="overflow-hidden rounded-xl border">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Stop</TableHead>
-                                  <TableHead>Bin ID</TableHead>
-                                  <TableHead>Priority</TableHead>
-                                  <TableHead>Distance (km)</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {route.plan.map((stop) => (
-                                  <TableRow key={`${stop.Stop}-${stop.Bin_ID}`}>
-                                    <TableCell>{stop.Stop}</TableCell>
-                                    <TableCell>{stop.Bin_ID}</TableCell>
-                                    <TableCell>{stop.Priority.toFixed(2)}</TableCell>
-                                    <TableCell>{stop['Distance_from_Depot(km)'].toFixed(2)}</TableCell>
+                    <div className="space-y-4">
+                      <BinMap rows={data.rows} routeStops={route.plan} title="Dispatch Route on Map" />
+                      <Card className="border-white/70 bg-white/75 shadow-sm">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <Route className="h-4 w-4" />
+                            Recommended Collection Order
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          {route.plan?.length ? (
+                            <div className="overflow-hidden rounded-xl border">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Stop</TableHead>
+                                    <TableHead>Bin ID</TableHead>
+                                    <TableHead>Priority</TableHead>
+                                    <TableHead>Distance (km)</TableHead>
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        ) : (
-                          <p className="rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground">
-                            No bins have crossed the threshold yet. Continue monitoring to trigger a route.
-                          </p>
-                        )}
-                      </CardContent>
-                    </Card>
+                                </TableHeader>
+                                <TableBody>
+                                  {route.plan.map((stop) => (
+                                    <TableRow key={`${stop.Stop}-${stop.Bin_ID}`}>
+                                      <TableCell>{stop.Stop}</TableCell>
+                                      <TableCell>{stop.Bin_ID}</TableCell>
+                                      <TableCell>{stop.Priority.toFixed(2)}</TableCell>
+                                      <TableCell>{stop['Distance_from_Depot(km)'].toFixed(2)}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          ) : (
+                            <p className="rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground">
+                              No bins have crossed the threshold yet. Continue monitoring to trigger a route.
+                            </p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
                   )}
                 />
               </>

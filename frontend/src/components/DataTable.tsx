@@ -46,7 +46,9 @@ function DataTable({ rows, emptyMessage = 'No data available.' }: DataTableProps
     )
   }
 
-  const columns = Object.keys(rows[0])
+  const columns = Object.keys(rows[0]).filter(
+    (column) => !['Latitude', 'Longitude'].includes(column),
+  )
 
   return (
     <div className="overflow-hidden rounded-2xl border bg-card/70 backdrop-blur-sm">

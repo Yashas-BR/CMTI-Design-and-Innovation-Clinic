@@ -22,6 +22,9 @@ export type PriorityData = {
 export type RouteStop = {
   Stop: number | string
   Bin_ID: string
+  Latitude: number
+  Longitude: number
+  Location: string
   Priority: number
   'Distance_from_Depot(km)': number
 }
