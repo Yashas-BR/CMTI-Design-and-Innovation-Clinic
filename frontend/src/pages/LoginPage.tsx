@@ -85,17 +85,17 @@ function LoginPage({ onLogin, apiUrl, authError }: LoginPageProps) {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_20%,#ccfbf1_0%,#f0fdfa_36%,#ecfeff_63%,#f8fafc_100%)] px-4 py-12">
+    <main className="relative min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_15%_20%,#ccfbf1_0%,#f0fdfa_36%,#ecfeff_63%,#f8fafc_100%)] px-4 py-8 sm:py-12">
       <div className="absolute -left-28 top-20 h-80 w-80 rounded-full bg-emerald-200/35 blur-3xl" />
       <div className="absolute -right-24 bottom-10 h-96 w-96 rounded-full bg-sky-200/40 blur-3xl" />
 
       <div className="relative mx-auto grid max-w-5xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="space-y-5 rounded-3xl border border-white/60 bg-white/50 p-8 shadow-xl backdrop-blur">
+        <section className="space-y-5 rounded-3xl border border-white/60 bg-white/50 p-6 shadow-xl backdrop-blur sm:p-8">
           <div className="inline-flex items-center gap-2 rounded-full border bg-white/80 px-3 py-1 text-xs font-medium text-emerald-800">
             <Sparkles className="h-3.5 w-3.5" />
             Smart Bin Fill Collection Routing
           </div>
-          <h1 className="text-4xl font-semibold leading-tight text-slate-900">
+          <h1 className="text-3xl font-semibold leading-tight text-slate-900 sm:text-4xl">
             Calm oversight for faster, cleaner waste collection.
           </h1>
           <p className="max-w-xl text-sm leading-6 text-slate-600">

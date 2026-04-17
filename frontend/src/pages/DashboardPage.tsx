@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
-import { Download, LogOut, MapPinned, Pencil, Plus, Route, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Download, LogOut, MapPinned, Pencil, Plus, RefreshCw, Route, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import {
@@ -13,6 +13,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import {
   Table,
@@ -22,8 +29,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tabs as UiTabs,
+  TabsContent as UiTabsContent,
+  TabsList as UiTabsList,
+  TabsTrigger as UiTabsTrigger,
+} from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
-import Tabs from '@/components/Tabs'
+import DashboardTabs from '@/components/Tabs'
 import DataTable from '@/components/DataTable'
 import BinMap from '@/components/BinMap'
 import FillChart from '@/components/FillChart'
@@ -52,6 +65,8 @@ type EditBinFormState = {
   longitude: string
 }
 
+type BinActionTab = 'add' | 'delete'
+
 type DashboardPageProps = {
   user: {
     username: string
@@ -71,6 +86,10 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
   const [binsLoading, setBinsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [binDialogOpen, setBinDialogOpen] = useState(false)
+  const [binActionTab, setBinActionTab] = useState<BinActionTab>('add')
+  const [deleteCandidateBinId, setDeleteCandidateBinId] = useState('')
+  const [selectedWardFilter, setSelectedWardFilter] = useState('all')
+  const [binIdSearch, setBinIdSearch] = useState('')
   const [editBinDialogOpen, setEditBinDialogOpen] = useState(false)
   const [activeBinId, setActiveBinId] = useState<string | null>(null)
   const [binSubmitting, setBinSubmitting] = useState(false)
@@ -97,9 +116,17 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     latitude: '',
     longitude: '',
   })
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
-  const fetchDashboardData = useCallback(async () => {
-    setLoading(true)
+  const fetchDashboardData = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true)
+    } else {
+      setRefreshing(true)
+    }
+
     try {
       const params = {
         seed: controls.seed,
@@ -125,12 +152,19 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
       setData(dashboardResponse.data)
       setPriority(priorityResponse.data)
       setRoute(routeResponse.data)
+      setLastUpdatedAt(new Date())
     } catch {
-      setData(null)
-      setPriority(null)
-      setRoute(null)
+      if (!silent) {
+        setData(null)
+        setPriority(null)
+        setRoute(null)
+      }
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      } else {
+        setRefreshing(false)
+      }
     }
   }, [apiUrl, controls, token])
 
@@ -161,6 +195,21 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     void fetchBins()
   }, [fetchBins])
 
+  useEffect(() => {
+    if (!autoRefreshEnabled) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void fetchDashboardData(true)
+      if (user.role === 'Authority') {
+        void fetchBins()
+      }
+    }, 20000)
+
+    return () => window.clearInterval(intervalId)
+  }, [autoRefreshEnabled, fetchBins, fetchDashboardData, user.role])
+
   const resetBinForm = () => {
     setBinError('')
     setSelectedPoint(null)
@@ -175,7 +224,10 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
 
   const openAddBinDialog = () => {
     resetBinForm()
+    setBinActionTab('add')
+    setDeleteCandidateBinId('')
     setBinDialogOpen(true)
+    void fetchBins()
   }
 
   const handleMapPick = (latitude: number, longitude: number) => {
@@ -276,10 +328,16 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
   }
 
-  const handleDeleteBin = async (binId: string) => {
-    const confirmed = window.confirm(`Delete bin ${binId}? This cannot be undone.`)
-    if (!confirmed) {
+  const handleDeleteBin = async (binId: string, showConfirm = true) => {
+    if (!binId) {
       return
+    }
+
+    if (showConfirm) {
+      const confirmed = window.confirm(`Delete bin ${binId}? This cannot be undone.`)
+      if (!confirmed) {
+        return
+      }
     }
 
     setDeleteBinId(binId)
@@ -287,6 +345,9 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
       await axios.delete(`${apiUrl}/dashboard/bins/${encodeURIComponent(binId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (deleteCandidateBinId === binId) {
+        setDeleteCandidateBinId('')
+      }
       await fetchDashboardData()
       await fetchBins()
     } finally {
@@ -294,18 +355,20 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
     }
   }
 
-  const recentBins = [...bins]
-    .sort((left, right) => {
-      const leftId = Number.parseInt(left.Bin_ID.replace(/^B/, ''), 10)
-      const rightId = Number.parseInt(right.Bin_ID.replace(/^B/, ''), 10)
+  const wardFilters = Array.from(new Set(bins.map((bin) => bin.Ward))).sort((left, right) =>
+    left.localeCompare(right),
+  )
 
-      if (Number.isNaN(leftId) || Number.isNaN(rightId)) {
-        return right.Bin_ID.localeCompare(left.Bin_ID)
-      }
+  const normalizedBinIdSearch = binIdSearch.trim().toLowerCase()
 
-      return rightId - leftId
-    })
-    .slice(0, 5)
+  const filteredBins = bins.filter((bin) => {
+    const wardMatches = selectedWardFilter === 'all' || bin.Ward === selectedWardFilter
+    const idMatches =
+      normalizedBinIdSearch.length === 0 ||
+      bin.Bin_ID.toLowerCase().includes(normalizedBinIdSearch)
+
+    return wardMatches && idMatches
+  })
 
   const updateControl = (key: keyof DashboardControls, value: number) => {
     if (Number.isNaN(value)) {
@@ -314,6 +377,10 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
 
     setControls((prev) => ({ ...prev, [key]: value }))
   }
+
+  const lastUpdatedLabel = lastUpdatedAt
+    ? lastUpdatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : 'Waiting for first update'
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#ecfeff_0%,#f0fdfa_45%,#f8fafc_100%)] px-4 py-6 md:px-8 md:py-8">
@@ -330,12 +397,25 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
             </div>
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <div className="rounded-xl border bg-white/70 px-3 py-2 text-slate-700">
+                Last update: {lastUpdatedLabel}
+              </div>
+              <Button
+                variant={autoRefreshEnabled ? 'secondary' : 'outline'}
+                onClick={() => setAutoRefreshEnabled((prev) => !prev)}
+              >
+                Auto refresh: {autoRefreshEnabled ? 'On' : 'Off'}
+              </Button>
+              <Button variant="outline" onClick={() => void fetchDashboardData(true)} disabled={refreshing}>
+                <RefreshCw className="mr-1 h-4 w-4" />
+                {refreshing ? 'Refreshing...' : 'Refresh now'}
+              </Button>
+              <div className="rounded-xl border bg-white/70 px-3 py-2 text-slate-700">
                 {user.username} ({user.role})
               </div>
               {user.role === 'Authority' ? (
                 <Button variant="outline" onClick={openAddBinDialog}>
                   <Plus className="mr-1 h-4 w-4" />
-                  Add Bin
+                  Update Bin
                 </Button>
               ) : null}
               <Button variant="outline" onClick={onLogout}>
@@ -356,102 +436,148 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
               }
             }}
           >
-            <DialogContent className="max-w-5xl">
+            <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Add dustbin by coordinates or map click</DialogTitle>
+                <DialogTitle>Update Bin Registry</DialogTitle>
                 <DialogDescription>
-                  Click anywhere on the map to fill latitude and longitude, or type the values manually.
+                  Manage bins from one place with separate add and delete actions.
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-                <div className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="bin-id">Bin ID</Label>
-                      <Input
-                        id="bin-id"
-                        value={binForm.bin_id}
-                        onChange={(event) => handleBinFieldChange('bin_id', event.target.value)}
-                        placeholder="Optional, auto-generates if empty"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="ward">Ward</Label>
-                      <Input
-                        id="ward"
-                        value={binForm.ward}
-                        onChange={(event) => handleBinFieldChange('ward', event.target.value)}
-                        placeholder="Ward name"
-                      />
-                    </div>
-                  </div>
+              <UiTabs value={binActionTab} onValueChange={(value) => setBinActionTab(value as BinActionTab)}>
+                <UiTabsList className="grid w-full grid-cols-2">
+                  <UiTabsTrigger value="add">Add Bin</UiTabsTrigger>
+                  <UiTabsTrigger value="delete">Delete Bin</UiTabsTrigger>
+                </UiTabsList>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="location">Location label</Label>
-                    <Input
-                      id="location"
-                      value={binForm.location}
-                      onChange={(event) => handleBinFieldChange('location', event.target.value)}
-                      placeholder="Market junction, lane, landmark"
+                <UiTabsContent value="add" className="mt-5 space-y-5">
+                  <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+                    <div className="space-y-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="bin-id">Bin ID</Label>
+                          <Input
+                            id="bin-id"
+                            value={binForm.bin_id}
+                            onChange={(event) => handleBinFieldChange('bin_id', event.target.value)}
+                            placeholder="Optional, auto-generates if empty"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="ward">Ward</Label>
+                          <Input
+                            id="ward"
+                            value={binForm.ward}
+                            onChange={(event) => handleBinFieldChange('ward', event.target.value)}
+                            placeholder="Ward name"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="location">Location label</Label>
+                        <Input
+                          id="location"
+                          value={binForm.location}
+                          onChange={(event) => handleBinFieldChange('location', event.target.value)}
+                          placeholder="Market junction, lane, landmark"
+                        />
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="latitude">Latitude</Label>
+                          <Input
+                            id="latitude"
+                            type="number"
+                            step="0.000001"
+                            value={binForm.latitude}
+                            onChange={(event) => handleBinFieldChange('latitude', event.target.value)}
+                            placeholder="12.971600"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="longitude">Longitude</Label>
+                          <Input
+                            id="longitude"
+                            type="number"
+                            step="0.000001"
+                            value={binForm.longitude}
+                            onChange={(event) => handleBinFieldChange('longitude', event.target.value)}
+                            placeholder="77.594600"
+                          />
+                        </div>
+                      </div>
+
+                      {binError ? (
+                        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {binError}
+                        </p>
+                      ) : null}
+
+                      <p className="text-sm text-muted-foreground">
+                        Selected coordinate:
+                        {selectedPoint
+                          ? ` ${selectedPoint[0].toFixed(6)}, ${selectedPoint[1].toFixed(6)}`
+                          : ' click the map to set it.'}
+                      </p>
+                    </div>
+
+                    <BinMap
+                      rows={data?.rows ?? []}
+                      title="Click the map to place a new bin"
+                      heightClassName="h-[320px] sm:h-[420px] lg:h-[520px]"
+                      onMapClick={handleMapPick}
+                      selectedPoint={selectedPoint}
                     />
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="latitude">Latitude</Label>
-                      <Input
-                        id="latitude"
-                        type="number"
-                        step="0.000001"
-                        value={binForm.latitude}
-                        onChange={(event) => handleBinFieldChange('latitude', event.target.value)}
-                        placeholder="12.971600"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="longitude">Longitude</Label>
-                      <Input
-                        id="longitude"
-                        type="number"
-                        step="0.000001"
-                        value={binForm.longitude}
-                        onChange={(event) => handleBinFieldChange('longitude', event.target.value)}
-                        placeholder="77.594600"
-                      />
-                    </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setBinDialogOpen(false)}>
+                      Close
+                    </Button>
+                    <Button onClick={handleAddBin} disabled={binSubmitting}>
+                      <MapPinned className="mr-1 h-4 w-4" />
+                      {binSubmitting ? 'Saving...' : 'Save bin'}
+                    </Button>
+                  </DialogFooter>
+                </UiTabsContent>
+
+                <UiTabsContent value="delete" className="mt-5 space-y-5">
+                  <div className="space-y-3">
+                    <Label htmlFor="delete-bin">Select bin to delete</Label>
+                    <Select value={deleteCandidateBinId} onValueChange={setDeleteCandidateBinId}>
+                      <SelectTrigger id="delete-bin">
+                        <SelectValue placeholder="Choose a bin" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bins.map((bin) => (
+                          <SelectItem key={`delete-option-${bin.Bin_ID}`} value={bin.Bin_ID}>
+                            {bin.Bin_ID} - {bin.Location}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      Deleting a bin permanently removes it from the registry and driver assignment lists.
+                    </p>
                   </div>
 
-                  {binError ? (
-                    <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      {binError}
-                    </p>
-                  ) : null}
-
-                  <p className="text-sm text-muted-foreground">
-                    Selected coordinate:
-                    {selectedPoint ? ` ${selectedPoint[0].toFixed(6)}, ${selectedPoint[1].toFixed(6)}` : ' click the map to set it.'}
-                  </p>
-                </div>
-
-                <BinMap
-                  rows={data?.rows ?? []}
-                  title="Click the map to place a new bin"
-                  heightClassName="h-[560px]"
-                  onMapClick={handleMapPick}
-                  selectedPoint={selectedPoint}
-                />
-              </div>
-
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setBinDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleAddBin} disabled={binSubmitting}>
-                  <MapPinned className="mr-1 h-4 w-4" />
-                  {binSubmitting ? 'Saving...' : 'Save bin'}
-                </Button>
-              </DialogFooter>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setBinDialogOpen(false)}>
+                      Close
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => void handleDeleteBin(deleteCandidateBinId, true)}
+                      disabled={!deleteCandidateBinId || deleteBinId === deleteCandidateBinId}
+                    >
+                      <Trash2 className="mr-1 h-4 w-4" />
+                      {deleteBinId === deleteCandidateBinId ? 'Deleting...' : 'Delete selected bin'}
+                    </Button>
+                  </DialogFooter>
+                </UiTabsContent>
+              </UiTabs>
             </DialogContent>
           </Dialog>
         ) : null}
@@ -467,7 +593,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
               }
             }}
           >
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Edit bin {activeBinId ?? ''}</DialogTitle>
                 <DialogDescription>
@@ -599,7 +725,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                       <CardTitle>Driver Assignment Matrix</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="overflow-hidden rounded-xl border">
+                      <div className="overflow-x-auto rounded-xl border">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -623,7 +749,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
 
                 <Separator />
 
-                <Tabs
+                <DashboardTabs
                   activeTab={activeTab}
                   onChangeTab={setActiveTab}
                   monitoring={(
@@ -635,25 +761,42 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                           <CardHeader>
                             <CardTitle>Bin Registry Management</CardTitle>
                             <CardDescription>
-                              Recently added bins and full registry with edit and delete actions.
+                              Full registry with ward filter, plus edit and delete actions.
                             </CardDescription>
                           </CardHeader>
                           <CardContent className="space-y-5">
-                            <div>
-                              <p className="mb-2 text-sm font-medium text-slate-700">Recently added bins</p>
-                              <div className="flex flex-wrap gap-2">
-                                {recentBins.map((bin) => (
-                                  <div key={`recent-${bin.Bin_ID}`} className="rounded-lg border bg-muted/30 px-3 py-1.5 text-sm">
-                                    <span className="font-medium">{bin.Bin_ID}</span>
-                                    <span className="ml-2 text-muted-foreground">{bin.Location}</span>
-                                  </div>
-                                ))}
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="grid gap-3 sm:max-w-xs">
+                                <Label htmlFor="ward-filter">Filter by ward</Label>
+                                <Select value={selectedWardFilter} onValueChange={setSelectedWardFilter}>
+                                  <SelectTrigger id="ward-filter">
+                                    <SelectValue placeholder="Select ward" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="all">All wards</SelectItem>
+                                    {wardFilters.map((ward) => (
+                                      <SelectItem key={`ward-filter-${ward}`} value={ward}>
+                                        {ward}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="grid gap-3 sm:max-w-xs">
+                                <Label htmlFor="bin-id-filter">Search by Bin ID</Label>
+                                <Input
+                                  id="bin-id-filter"
+                                  value={binIdSearch}
+                                  onChange={(event) => setBinIdSearch(event.target.value)}
+                                  placeholder="e.g. B12"
+                                />
                               </div>
                             </div>
 
-                            <div className="overflow-hidden rounded-xl border">
+                            <div className="max-h-[332px] overflow-auto rounded-xl border">
                               <Table>
-                                <TableHeader>
+                                <TableHeader className="sticky top-0 z-10 bg-white/95 backdrop-blur">
                                   <TableRow>
                                     <TableHead>Bin ID</TableHead>
                                     <TableHead>Ward</TableHead>
@@ -670,9 +813,15 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                                         Loading bins...
                                       </TableCell>
                                     </TableRow>
+                                  ) : filteredBins.length === 0 ? (
+                                    <TableRow>
+                                      <TableCell colSpan={6} className="text-center text-muted-foreground">
+                                        No bins found for the selected filters.
+                                      </TableCell>
+                                    </TableRow>
                                   ) : (
-                                    bins.map((bin) => (
-                                      <TableRow key={bin.Bin_ID}>
+                                    filteredBins.map((bin) => (
+                                      <TableRow key={bin.Bin_ID} className="h-14">
                                         <TableCell className="font-medium">{bin.Bin_ID}</TableCell>
                                         <TableCell>{bin.Ward}</TableCell>
                                         <TableCell>{bin.Location}</TableCell>
@@ -747,7 +896,7 @@ function DashboardPage({ user, onLogout, apiUrl, token }: DashboardPageProps) {
                         </CardHeader>
                         <CardContent>
                           {route.plan?.length ? (
-                            <div className="overflow-hidden rounded-xl border">
+                            <div className="overflow-x-auto rounded-xl border">
                               <Table>
                                 <TableHeader>
                                   <TableRow>

@@ -51,9 +51,9 @@ function DataTable({ rows, emptyMessage = 'No data available.' }: DataTableProps
   )
 
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card/70 backdrop-blur-sm">
-      <Table>
-        <TableHeader>
+    <div className="max-h-[332px] overflow-auto rounded-2xl border bg-card/70 backdrop-blur-sm">
+      <Table className="min-w-[720px]">
+        <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
           <TableRow className="bg-muted/40 hover:bg-muted/40">
             {columns.map((column) => (
               <TableHead key={column} className="font-medium text-foreground/90">
@@ -64,7 +64,7 @@ function DataTable({ rows, emptyMessage = 'No data available.' }: DataTableProps
         </TableHeader>
         <TableBody>
           {rows.map((row, index) => (
-            <TableRow key={`row-${index}`} className="hover:bg-accent/30">
+            <TableRow key={`row-${index}`} className="h-14 hover:bg-accent/30">
               {columns.map((column) => {
                 const value = row[column]
                 const isStatus = column.toLowerCase().includes('status') && typeof value === 'string'
