@@ -15,6 +15,8 @@ from app.schemas.operations_assignment import (
     RouteAssignmentResponse,
 )
 from app.schemas.operations_route import (
+    RouteAutoPlanTriggerRequest,
+    RouteAutoPlanTriggerResponse,
     DriverRouteListResponse,
     RouteDraftCreateRequest,
     RouteListResponse,
@@ -40,6 +42,7 @@ from app.services.operations_assignments import (
     reject_route_assignment,
 )
 from app.services.operations_routes import (
+    auto_plan_routes_from_live_state,
     complete_route,
     create_route_draft,
     get_route,
@@ -292,6 +295,27 @@ async def plan_route_route(
         raise HTTPException(status_code=_status_for_value_error(exc), detail=str(exc)) from exc
 
     return RoutePlanResponse(**data)
+
+
+@router.post("/routes/auto-plan", response_model=RouteAutoPlanTriggerResponse)
+async def auto_plan_routes_route(
+    payload: RouteAutoPlanTriggerRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(require_authority_user),
+) -> RouteAutoPlanTriggerResponse:
+    """Auto-generate intelligent draft routes from current live bin state."""
+    try:
+        data = await auto_plan_routes_from_live_state(
+            db,
+            org_id=user.org_id,
+            actor_user_id=user.id,
+            route_date=payload.route_date,
+            force=payload.force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=_status_for_value_error(exc), detail=str(exc)) from exc
+
+    return RouteAutoPlanTriggerResponse(**data)
 
 
 @router.post("/routes", response_model=RouteResponse, status_code=status.HTTP_201_CREATED)

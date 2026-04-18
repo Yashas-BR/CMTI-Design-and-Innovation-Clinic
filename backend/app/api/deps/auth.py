@@ -47,7 +47,15 @@ async def _load_roles(db: AsyncSession, user_id: int) -> set[str]:
 
 
 async def resolve_auth_user_from_token(db: AsyncSession, token: str) -> AuthUser:
-    """Resolve authenticated user from JWT token value."""
+    """Resolve authenticated user from JWT token value.
+
+    Role resolution strategy:
+    1. Try to load roles from the database (source of truth).
+    2. If no DB rows found, fall back to the ``roles`` claim embedded in the
+       JWT payload.  This allows the system to work when ``user_roles`` rows
+       have not yet been seeded in the database while still honouring tokens
+       that were issued with the correct role set.
+    """
     payload = verify_token(token)
     if payload is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
@@ -55,6 +63,9 @@ async def resolve_auth_user_from_token(db: AsyncSession, token: str) -> AuthUser
     subject = payload.get("sub")
     user_id = _parse_user_id(payload.get("user_id")) or _parse_user_id(subject)
     email = payload.get("email")
+
+    # Roles explicitly embedded in the JWT (used as fallback below).
+    jwt_roles: set[str] = set(payload.get("roles") or [])
 
     user: User | None = None
     if user_id is not None:
@@ -71,7 +82,9 @@ async def resolve_auth_user_from_token(db: AsyncSession, token: str) -> AuthUser
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
-    roles = await _load_roles(db, user.id)
+    # Prefer DB roles; fall back to JWT claim when no DB rows exist yet.
+    db_roles = await _load_roles(db, user.id)
+    roles = db_roles if db_roles else jwt_roles
     return AuthUser(id=user.id, org_id=user.org_id, email=user.email, roles=roles)
 
 

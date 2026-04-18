@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from importlib import import_module
 from math import atan2, cos, radians, sin, sqrt
@@ -12,7 +12,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.iot import Bin, BinCurrentState, Route, RouteAssignment, RouteStop, Vehicle
+from app.core.config import settings
+from app.models.iot import Bin, BinCurrentState, OptimizationRun, Route, RouteAssignment, RouteStop, Vehicle
 from app.services.operations_audit import append_audit_log
 from app.services.operations_common import (
     ROUTE_TRANSITIONS,
@@ -36,6 +37,10 @@ class CandidateBin:
     fill_pct: float | None
     priority_score: float
     estimated_load_kg: float
+    ttf_min: float | None = None
+    overflow_imminent: bool = False
+    area_id: int | None = None
+    depot_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -67,11 +72,74 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            return datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
+def _optimization_summary_from_run(run: OptimizationRun | None) -> dict[str, Any] | None:
+    if run is None or not isinstance(run.result_summary_json, dict):
+        return None
+
+    payload = run.result_summary_json
+    recommended_start_at = _to_datetime(payload.get("recommended_start_at"))
+
+    return {
+        "planner_type": str(payload.get("planner_type") or "manual_preview"),
+        "algorithm": str(payload.get("algorithm") or run.algorithm_name),
+        "recommended_start_at": recommended_start_at,
+        "baseline_distance_km": _to_float(payload.get("baseline_distance_km")),
+        "estimated_distance_km": _to_float(payload.get("estimated_distance_km")),
+        "estimated_fuel_saved_liters": _to_float(payload.get("estimated_fuel_saved_liters")),
+        "selected_stops": _to_int(payload.get("selected_stops")),
+        "candidates_considered": _to_int(payload.get("candidates_considered")),
+        "skipped_due_to_shift": _to_int(payload.get("skipped_due_to_shift")),
+        "cluster_depot_id": _to_int(payload.get("cluster_depot_id")),
+        "cluster_area_id": _to_int(payload.get("cluster_area_id")),
+        "efficiency_reasoning": [
+            str(item)
+            for item in payload.get("efficiency_reasoning", [])
+            if isinstance(item, str) and item.strip()
+        ],
+    }
+
+
+def _is_auto_generated_route(route: Route, optimization_summary: dict[str, Any] | None) -> bool:
+    if optimization_summary is not None and optimization_summary.get("planner_type") == "auto_monitoring":
+        return True
+    return route.route_code.upper().startswith("AUTO-")
+
+
 def _route_to_dict(
     route: Route,
     *,
     stops_count: int | None = None,
     start_point: dict[str, Any] | None = None,
+    optimization_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "id": int(route.id),
@@ -87,6 +155,8 @@ def _route_to_dict(
         "updated_by": route.updated_by,
         "stops_count": stops_count,
         "start_point": start_point,
+        "auto_generated": _is_auto_generated_route(route, optimization_summary),
+        "optimization_summary": optimization_summary,
         "created_at": route.created_at,
         "updated_at": route.updated_at,
     }
@@ -284,6 +354,10 @@ async def _get_candidate_bins(
                     ttf_min=ttf_min,
                 ),
                 estimated_load_kg=round(max(estimated_load_kg, 0.0), 3),
+                ttf_min=ttf_min,
+                overflow_imminent=overflow_imminent,
+                area_id=bin_obj.area_id,
+                depot_id=bin_obj.depot_id,
             )
         )
 
@@ -732,6 +806,70 @@ def _build_stop_items(
     return items, cumulative_distance
 
 
+def _estimate_recommended_start_at(route_date: date, selected_bins: list[CandidateBin]) -> datetime:
+    now = _now_utc()
+    default_hour = max(0, min(23, int(settings.route_auto_plan_default_start_hour_utc)))
+    day_start = datetime.combine(route_date, time(hour=default_hour, tzinfo=timezone.utc))
+
+    if route_date > now.date():
+        return day_start
+
+    soonest_ttf = min(
+        [item.ttf_min for item in selected_bins if item.ttf_min is not None and item.ttf_min >= 0],
+        default=None,
+    )
+    if soonest_ttf is not None:
+        if soonest_ttf <= 30:
+            return now + timedelta(minutes=5)
+        if soonest_ttf <= 120:
+            return now + timedelta(minutes=20)
+
+    return max(now + timedelta(minutes=45), day_start)
+
+
+def _build_efficiency_reasoning(
+    *,
+    algorithm: str,
+    start_source: str,
+    selected_stops: int,
+    candidates_considered: int,
+    skipped_due_to_shift: int,
+    estimated_distance_km: float,
+    estimated_duration_min: float,
+    baseline_distance_km: float | None,
+    estimated_fuel_saved_liters: float | None,
+    recommended_start_at: datetime,
+) -> list[str]:
+    reasons = [
+        f"Start point anchored to {start_source.replace('_', ' ')} for consistent dispatch.",
+        (
+            f"Selected {selected_stops} of {candidates_considered} bins using urgency signals "
+            f"(fill level, overflow risk, and predicted time-to-full)."
+        ),
+        (
+            f"Algorithm {algorithm} orders stops to reduce repeated legs, with estimated "
+            f"distance {estimated_distance_km:.2f} km and duration {estimated_duration_min:.1f} min."
+        ),
+    ]
+
+    if skipped_due_to_shift > 0:
+        reasons.append(
+            f"Deferred {skipped_due_to_shift} low-feasibility bins to keep route inside shift constraints."
+        )
+
+    if baseline_distance_km is not None and estimated_fuel_saved_liters is not None:
+        distance_saved = max(0.0, baseline_distance_km - estimated_distance_km)
+        reasons.append(
+            f"Compared to baseline sequencing, distance drops by about {distance_saved:.2f} km "
+            f"(~{estimated_fuel_saved_liters:.2f} liters fuel saved)."
+        )
+
+    reasons.append(
+        f"Recommended start time is {recommended_start_at.isoformat()} based on current urgency trend."
+    )
+    return reasons
+
+
 async def plan_route(
     db: AsyncSession,
     org_id: int,
@@ -788,6 +926,11 @@ async def plan_route(
     ]
     distance_lookup = await build_travel_cost_matrix(matrix_points)
     should_plan_multi_vehicle = use_multi_vehicle or bool(vehicle_ids)
+
+    baseline_distance_km: float | None = None
+    estimated_fuel_saved_liters: float | None = None
+    recommended_start_at: datetime
+    efficiency_reasoning: list[str]
 
     if should_plan_multi_vehicle:
         vehicles = await _get_planning_vehicles(
@@ -871,6 +1014,20 @@ async def plan_route(
             for index, candidate in enumerate(candidates)
             if index in dropped_candidate_index_set
         ]
+        selected_candidates = [item for route_bins in routes_per_vehicle for item in route_bins]
+        recommended_start_at = _estimate_recommended_start_at(route_date, selected_candidates)
+        efficiency_reasoning = _build_efficiency_reasoning(
+            algorithm=algorithm,
+            start_source=start_point_resolved.source,
+            selected_stops=len(all_items),
+            candidates_considered=len(candidates),
+            skipped_due_to_shift=len(unassigned_bins),
+            estimated_distance_km=round(fleet_distance_km, 3),
+            estimated_duration_min=round(fleet_duration_min, 2),
+            baseline_distance_km=None,
+            estimated_fuel_saved_liters=None,
+            recommended_start_at=recommended_start_at,
+        )
 
         result = {
             "algorithm": algorithm,
@@ -885,6 +1042,10 @@ async def plan_route(
             "vehicle_routes": vehicle_routes,
             "unassigned_bin_ids": [candidate.bin_id for candidate in unassigned_bins],
             "total_estimated_load_kg": round(total_assigned_load_kg, 3),
+            "baseline_distance_km": None,
+            "estimated_fuel_saved_liters": None,
+            "recommended_start_at": recommended_start_at,
+            "efficiency_reasoning": efficiency_reasoning,
         }
     else:
         greedy_selected, skipped_due_to_shift = _build_route_greedy(
@@ -899,11 +1060,27 @@ async def plan_route(
 
         optimized_selected = _two_opt_improve(start, greedy_selected, distance_lookup)
         stop_items, total_distance_km = _build_stop_items(start, optimized_selected, distance_lookup)
+        baseline_distance_km = _path_distance_km(start, greedy_selected, distance_lookup)
+        km_per_liter = max(float(settings.route_plan_efficiency_baseline_km_per_liter), 0.1)
+        estimated_fuel_saved_liters = max(0.0, baseline_distance_km - total_distance_km) / km_per_liter
         estimated_duration_min = _estimate_duration_min(
             travel_distance_km=total_distance_km,
             stops_count=len(stop_items),
             avg_speed_kmph=avg_speed_kmph,
             service_minutes_per_stop=service_minutes_per_stop,
+        )
+        recommended_start_at = _estimate_recommended_start_at(route_date, optimized_selected)
+        efficiency_reasoning = _build_efficiency_reasoning(
+            algorithm="greedy_nn_2opt_v1",
+            start_source=start_point_resolved.source,
+            selected_stops=len(stop_items),
+            candidates_considered=len(candidates),
+            skipped_due_to_shift=skipped_due_to_shift,
+            estimated_distance_km=round(total_distance_km, 3),
+            estimated_duration_min=round(estimated_duration_min, 2),
+            baseline_distance_km=round(baseline_distance_km, 3),
+            estimated_fuel_saved_liters=round(estimated_fuel_saved_liters, 3),
+            recommended_start_at=recommended_start_at,
         )
 
         result = {
@@ -922,6 +1099,10 @@ async def plan_route(
                 sum(item.estimated_load_kg for item in optimized_selected),
                 3,
             ),
+            "baseline_distance_km": round(baseline_distance_km, 3),
+            "estimated_fuel_saved_liters": round(estimated_fuel_saved_liters, 3),
+            "recommended_start_at": recommended_start_at,
+            "efficiency_reasoning": efficiency_reasoning,
         }
 
     if actor_user_id is not None:
@@ -960,16 +1141,350 @@ async def plan_route(
     return result
 
 
+@dataclass(slots=True)
+class ExistingRoutePath:
+    """Existing route path snapshot used for overlap checks."""
+
+    route_id: int
+    depot_id: int | None
+    stop_bin_ids: set[int]
+
+
+def _majority_int(values: list[int | None]) -> int | None:
+    counts: dict[int, int] = {}
+    for value in values:
+        if value is None:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        return None
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+def _overlap_ratio(first: set[int], second: set[int]) -> float:
+    if not first or not second:
+        return 0.0
+    denominator = max(min(len(first), len(second)), 1)
+    return len(first.intersection(second)) / denominator
+
+
+def _build_auto_route_code(*, route_date: date, depot_id: int | None, area_id: int | None, sequence: int) -> str:
+    cluster_token = "GEN"
+    if depot_id is not None:
+        cluster_token = f"D{depot_id}"
+    elif area_id is not None:
+        cluster_token = f"A{area_id}"
+    return f"AUTO-{route_date.strftime('%Y%m%d')}-{cluster_token}-{_now_utc().strftime('%H%M%S')}-{sequence:02d}"
+
+
+async def _create_optimization_run(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    actor_user_id: int | None,
+    algorithm_name: str,
+    algorithm_version: str,
+    input_snapshot_json: dict[str, Any],
+    result_summary_json: dict[str, Any],
+) -> OptimizationRun:
+    now = _now_utc()
+    run = OptimizationRun(
+        org_id=org_id,
+        run_started_at=now,
+        run_completed_at=now,
+        algorithm_name=algorithm_name,
+        algorithm_version=algorithm_version,
+        input_snapshot_json=input_snapshot_json,
+        result_summary_json=result_summary_json,
+        status="completed",
+        error_message=None,
+        created_by=actor_user_id,
+        created_at=now,
+    )
+    db.add(run)
+    await db.flush()
+    return run
+
+
+async def _list_active_route_paths(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    route_date: date,
+) -> list[ExistingRoutePath]:
+    routes = (
+        await db.execute(
+            select(Route)
+            .where(
+                Route.org_id == org_id,
+                Route.route_date == route_date,
+                Route.status.in_(["draft", "published", "in_progress"]),
+            )
+            .order_by(Route.id.asc())
+        )
+    ).scalars().all()
+
+    if not routes:
+        return []
+
+    route_ids = [int(route.id) for route in routes]
+    stop_rows = (
+        await db.execute(
+            select(RouteStop.route_id, RouteStop.bin_id)
+            .where(RouteStop.route_id.in_(route_ids))
+        )
+    ).all()
+
+    stop_map: dict[int, set[int]] = {route_id: set() for route_id in route_ids}
+    for route_id, bin_id in stop_rows:
+        stop_map[int(route_id)].add(int(bin_id))
+
+    return [
+        ExistingRoutePath(
+            route_id=int(route.id),
+            depot_id=route.depot_id,
+            stop_bin_ids=stop_map.get(int(route.id), set()),
+        )
+        for route in routes
+    ]
+
+
+async def auto_plan_routes_from_live_state(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    actor_user_id: int | None,
+    route_date: date | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Generate draft routes automatically from live bin states with overlap guards."""
+    target_date = route_date or _now_utc().date()
+
+    if not settings.route_auto_plan_enabled and not force:
+        return {
+            "route_date": target_date,
+            "triggered": False,
+            "created_count": 0,
+            "skipped_count": 0,
+            "created_routes": [],
+            "reasons": ["automatic planner is disabled"],
+        }
+
+    cooldown_minutes = max(int(settings.route_auto_plan_cooldown_minutes), 0)
+    if cooldown_minutes > 0 and not force:
+        cooldown_since = _now_utc() - timedelta(minutes=cooldown_minutes)
+        recent_auto_runs = (
+            await db.execute(
+                select(func.count(OptimizationRun.id)).where(
+                    OptimizationRun.org_id == org_id,
+                    OptimizationRun.algorithm_name == "auto_monitoring_route_planner",
+                    OptimizationRun.status == "completed",
+                    OptimizationRun.run_started_at >= cooldown_since,
+                )
+            )
+        ).scalar_one() or 0
+        if int(recent_auto_runs) > 0:
+            return {
+                "route_date": target_date,
+                "triggered": False,
+                "created_count": 0,
+                "skipped_count": 0,
+                "created_routes": [],
+                "reasons": [
+                    f"auto-planner cooldown active for {cooldown_minutes} minutes to avoid duplicate drafts"
+                ],
+            }
+
+    candidates = await _get_candidate_bins(
+        db,
+        org_id,
+        include_bin_ids=None,
+        min_fill_pct=float(settings.route_auto_plan_min_fill_pct),
+        overflow_only=bool(settings.route_auto_plan_overflow_only),
+    )
+    if not candidates:
+        return {
+            "route_date": target_date,
+            "triggered": True,
+            "created_count": 0,
+            "skipped_count": 0,
+            "created_routes": [],
+            "reasons": ["no bins matched auto-planning thresholds"],
+        }
+
+    grouped: dict[tuple[int | None, int | None], list[CandidateBin]] = {}
+    for candidate in candidates:
+        key = (candidate.depot_id, candidate.area_id)
+        grouped.setdefault(key, []).append(candidate)
+
+    active_paths = await _list_active_route_paths(db, org_id=org_id, route_date=target_date)
+    created_routes: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    skipped_count = 0
+
+    min_stops = max(int(settings.route_auto_plan_min_stops), 1)
+    overlap_threshold = min(max(float(settings.route_auto_plan_overlap_threshold), 0.0), 1.0)
+
+    ordered_clusters = sorted(
+        grouped.items(),
+        key=lambda item: (
+            -len(item[1]),
+            item[0][0] if item[0][0] is not None else 10**9,
+            item[0][1] if item[0][1] is not None else 10**9,
+        ),
+    )
+
+    for sequence, ((cluster_depot_id, cluster_area_id), cluster_candidates) in enumerate(ordered_clusters, start=1):
+        cluster_bin_ids = [candidate.bin_id for candidate in cluster_candidates]
+        if len(cluster_bin_ids) < min_stops:
+            skipped_count += 1
+            reasons.append(
+                f"cluster depot={cluster_depot_id} area={cluster_area_id} skipped: below minimum stops"
+            )
+            continue
+
+        resolved_depot_id = cluster_depot_id or _majority_int([item.depot_id for item in cluster_candidates])
+        resolved_area_id = cluster_area_id or _majority_int([item.area_id for item in cluster_candidates])
+
+        plan = await plan_route(
+            db,
+            org_id,
+            route_date=target_date,
+            depot_id=resolved_depot_id,
+            driver_user_id=None,
+            include_bin_ids=cluster_bin_ids,
+            max_stops=int(settings.route_auto_plan_max_stops),
+            min_fill_pct=float(settings.route_auto_plan_min_fill_pct),
+            overflow_only=bool(settings.route_auto_plan_overflow_only),
+            target_shift_minutes=int(settings.route_auto_plan_target_shift_minutes),
+            avg_speed_kmph=float(settings.route_auto_plan_avg_speed_kmph),
+            service_minutes_per_stop=float(settings.route_auto_plan_service_minutes_per_stop),
+            use_multi_vehicle=False,
+            vehicle_ids=None,
+            actor_user_id=None,
+        )
+
+        planned_bin_ids = [int(item["bin_id"]) for item in plan.get("items", [])]
+        if len(planned_bin_ids) < min_stops:
+            skipped_count += 1
+            reasons.append(
+                f"cluster depot={resolved_depot_id} area={resolved_area_id} skipped: optimized stops below minimum"
+            )
+            continue
+
+        should_skip_overlap = False
+        if not force:
+            planned_set = set(planned_bin_ids)
+            for existing in active_paths:
+                if resolved_depot_id is not None and existing.depot_id is not None and existing.depot_id != resolved_depot_id:
+                    continue
+
+                overlap = _overlap_ratio(planned_set, existing.stop_bin_ids)
+                if overlap >= overlap_threshold:
+                    should_skip_overlap = True
+                    skipped_count += 1
+                    reasons.append(
+                        (
+                            f"cluster depot={resolved_depot_id} area={resolved_area_id} skipped: overlap "
+                            f"{overlap:.2f} with existing route {existing.route_id}"
+                        )
+                    )
+                    break
+
+        if should_skip_overlap:
+            continue
+
+        recommended_start = plan.get("recommended_start_at")
+        optimization_summary = {
+            "planner_type": "auto_monitoring",
+            "algorithm": plan.get("algorithm"),
+            "recommended_start_at": (
+                recommended_start.isoformat() if isinstance(recommended_start, datetime) else recommended_start
+            ),
+            "baseline_distance_km": plan.get("baseline_distance_km"),
+            "estimated_distance_km": plan.get("estimated_distance_km"),
+            "estimated_fuel_saved_liters": plan.get("estimated_fuel_saved_liters"),
+            "selected_stops": plan.get("selected_stops"),
+            "candidates_considered": plan.get("candidates_considered"),
+            "skipped_due_to_shift": plan.get("skipped_due_to_shift"),
+            "cluster_depot_id": resolved_depot_id,
+            "cluster_area_id": resolved_area_id,
+            "efficiency_reasoning": plan.get("efficiency_reasoning", []),
+        }
+
+        optimization_run = await _create_optimization_run(
+            db,
+            org_id=org_id,
+            actor_user_id=actor_user_id,
+            algorithm_name="auto_monitoring_route_planner",
+            algorithm_version="v1",
+            input_snapshot_json={
+                "route_date": str(target_date),
+                "cluster_depot_id": resolved_depot_id,
+                "cluster_area_id": resolved_area_id,
+                "include_bin_ids": cluster_bin_ids,
+                "min_fill_pct": float(settings.route_auto_plan_min_fill_pct),
+                "overflow_only": bool(settings.route_auto_plan_overflow_only),
+                "max_stops": int(settings.route_auto_plan_max_stops),
+                "target_shift_minutes": int(settings.route_auto_plan_target_shift_minutes),
+                "avg_speed_kmph": float(settings.route_auto_plan_avg_speed_kmph),
+                "service_minutes_per_stop": float(settings.route_auto_plan_service_minutes_per_stop),
+            },
+            result_summary_json=optimization_summary,
+        )
+
+        route_payload = await create_route_draft(
+            db,
+            org_id,
+            actor_user_id,
+            route_code=_build_auto_route_code(
+                route_date=target_date,
+                depot_id=resolved_depot_id,
+                area_id=resolved_area_id,
+                sequence=sequence,
+            ),
+            route_date=target_date,
+            depot_id=resolved_depot_id,
+            stop_bin_ids=planned_bin_ids,
+            driver_user_id=None,
+            optimization_run_id=int(optimization_run.id),
+        )
+        created_routes.append(route_payload)
+        active_paths.append(
+            ExistingRoutePath(
+                route_id=int(route_payload["id"]),
+                depot_id=resolved_depot_id,
+                stop_bin_ids=set(planned_bin_ids),
+            )
+        )
+        reasons.append(
+            (
+                f"created auto draft {route_payload['route_code']} with {len(planned_bin_ids)} stops "
+                f"for depot={resolved_depot_id} area={resolved_area_id}"
+            )
+        )
+
+    return {
+        "route_date": target_date,
+        "triggered": True,
+        "created_count": len(created_routes),
+        "skipped_count": skipped_count,
+        "created_routes": created_routes,
+        "reasons": reasons,
+    }
+
+
 async def create_route_draft(
     db: AsyncSession,
     org_id: int,
-    actor_user_id: int,
+    actor_user_id: int | None,
     *,
     route_code: str,
     route_date: date,
     depot_id: int | None,
     stop_bin_ids: list[int],
     driver_user_id: int | None,
+    optimization_run_id: int | None = None,
 ) -> dict[str, Any]:
     """Create one draft route and its ordered route stops."""
     unique_stop_ids = list(dict.fromkeys(stop_bin_ids))
@@ -994,7 +1509,7 @@ async def create_route_draft(
         status="draft",
         total_distance_km=None,
         estimated_duration_min=None,
-        optimization_run_id=None,
+        optimization_run_id=optimization_run_id,
         created_by=actor_user_id,
         updated_by=actor_user_id,
     )
@@ -1025,10 +1540,21 @@ async def create_route_draft(
         bin_ids=unique_stop_ids,
     )
 
+    optimization_run: OptimizationRun | None = None
+    if optimization_run_id is not None:
+        optimization_run = (
+            await db.execute(
+                select(OptimizationRun)
+                .where(OptimizationRun.id == optimization_run_id, OptimizationRun.org_id == org_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
     after_state = _route_to_dict(
         route,
         stops_count=len(unique_stop_ids),
         start_point=start_point_to_dict(start_point_resolved),
+        optimization_summary=_optimization_summary_from_run(optimization_run),
     )
 
     await append_audit_log(
@@ -1076,8 +1602,9 @@ async def list_routes(
     total = (await db.execute(select(func.count(Route.id)).where(*filters))).scalar_one() or 0
     rows = (
         await db.execute(
-            select(Route, count_subquery.c.stops_count)
+            select(Route, count_subquery.c.stops_count, OptimizationRun)
             .outerjoin(count_subquery, count_subquery.c.route_id == Route.id)
+            .outerjoin(OptimizationRun, OptimizationRun.id == Route.optimization_run_id)
             .where(*filters)
             .order_by(Route.route_date.desc(), Route.id.desc())
             .limit(safe_limit)
@@ -1090,7 +1617,11 @@ async def list_routes(
         "limit": safe_limit,
         "offset": safe_offset,
         "items": [
-            _route_to_dict(row[0], stops_count=int(row[1] or 0))
+            _route_to_dict(
+                row[0],
+                stops_count=int(row[1] or 0),
+                optimization_summary=_optimization_summary_from_run(row[2]),
+            )
             for row in rows
         ],
     }
@@ -1140,6 +1671,7 @@ async def list_driver_routes(
             Route,
             RouteAssignment,
             route_stops_count_subquery.c.stops_count,
+            OptimizationRun,
         )
         .join(
             latest_assignment_subquery,
@@ -1153,6 +1685,7 @@ async def list_driver_routes(
             route_stops_count_subquery,
             route_stops_count_subquery.c.route_id == Route.id,
         )
+        .outerjoin(OptimizationRun, OptimizationRun.id == Route.optimization_run_id)
         .where(*filters)
     )
 
@@ -1173,8 +1706,12 @@ async def list_driver_routes(
     ).all()
 
     items: list[dict[str, Any]] = []
-    for route, assignment, stops_count in rows:
-        route_payload = _route_to_dict(route, stops_count=int(stops_count or 0))
+    for route, assignment, stops_count, optimization_run in rows:
+        route_payload = _route_to_dict(
+            route,
+            stops_count=int(stops_count or 0),
+            optimization_summary=_optimization_summary_from_run(optimization_run),
+        )
         route_payload.update(
             {
                 "assignment_id": int(assignment.id),
@@ -1223,7 +1760,22 @@ async def get_route(
         except ValueError:
             start_point = None
 
-    return _route_to_dict(route, stops_count=int(stops_count), start_point=start_point)
+    optimization_run: OptimizationRun | None = None
+    if route.optimization_run_id is not None:
+        optimization_run = (
+            await db.execute(
+                select(OptimizationRun)
+                .where(OptimizationRun.id == route.optimization_run_id, OptimizationRun.org_id == org_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    return _route_to_dict(
+        route,
+        stops_count=int(stops_count),
+        start_point=start_point,
+        optimization_summary=_optimization_summary_from_run(optimization_run),
+    )
 
 
 async def publish_route(

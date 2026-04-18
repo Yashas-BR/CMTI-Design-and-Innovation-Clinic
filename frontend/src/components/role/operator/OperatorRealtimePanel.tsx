@@ -366,9 +366,12 @@ function OperatorRealtimePanel({
       setDevices(devicesResponse.data.items);
       setSummary(summaryResponse.data);
 
-      if (nextBins.length > 0 && selectedBinCode == null) {
-        setSelectedBinCode(nextBins[0].bin_code);
-      }
+      // Only pre-select the first bin on the very first load, not on re-fetches
+      // triggered by user interactions. Using a functional update on selectedBinCode
+      // so we don't need it in the dependency array.
+      setSelectedBinCode((current) =>
+        current == null && nextBins.length > 0 ? nextBins[0].bin_code : current,
+      );
 
       const latestResults = await Promise.allSettled(
         nextBins.map((bin) =>
@@ -418,7 +421,7 @@ function OperatorRealtimePanel({
     } finally {
       setLoading(false);
     }
-  }, [apiBaseUrl, headers, selectedBinCode]);
+  }, [apiBaseUrl, headers]);
 
   useEffect(() => {
     void fetchBootstrapData();

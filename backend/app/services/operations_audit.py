@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -22,6 +23,26 @@ def _trim_request_id(request_id: str | None) -> str | None:
     if not value:
         return None
     return value[:100]
+
+
+def _to_json_safe(value: Any) -> Any:
+    """Convert Python objects into JSON-serializable values."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, Decimal):
+        return float(value)
+
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        return {str(key): _to_json_safe(val) for key, val in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_to_json_safe(item) for item in value]
+
+    return str(value)
 
 
 async def find_audit_by_request(
@@ -76,8 +97,8 @@ async def append_audit_log(
         action_type=action_type,
         entity_type=entity_type,
         entity_id=entity_id,
-        before_json=before_json,
-        after_json=after_json,
+        before_json=_to_json_safe(before_json),
+        after_json=_to_json_safe(after_json),
         request_id=_trim_request_id(request_id),
         ip_address=ip_address,
         user_agent=user_agent,

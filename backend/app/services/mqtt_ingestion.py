@@ -11,6 +11,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.iot import (
     Alert,
     AlertEvent,
@@ -24,6 +25,7 @@ from app.models.iot import (
 from app.schemas.mqtt import MQTTIngestRequest
 from app.services.bin_state_realtime import broadcast_bin_current_state_update
 from app.services.notifications import dispatch_alert_opened
+from app.services.operations_routes import auto_plan_routes_from_live_state
 
 
 ALERT_GREEN = "GREEN"
@@ -281,7 +283,7 @@ async def _upsert_current_state(
     }
 
     stmt = pg_insert(BinCurrentState).values(**values_map)
-    stmt = stmt.on_conflict_do_update(index_elements=[BinCurrentState.bin_id], set_=update_map)
+    stmt = stmt.on_conflict_do_update(index_elements=["bin_id"], set_=update_map)
     await db.execute(stmt)
 
 
@@ -538,6 +540,21 @@ async def ingest_mqtt_message(db: AsyncSession, request: MQTTIngestRequest) -> d
 
     if current_state_changed:
         await broadcast_bin_current_state_update(db, bin_id=bin_obj.id)
+
+    if channel == "data" and current_state_changed and settings.route_auto_plan_enabled:
+        try:
+            auto_plan_result = await auto_plan_routes_from_live_state(
+                db,
+                org_id=bin_obj.org_id,
+                actor_user_id=settings.route_auto_plan_system_user_id,
+            )
+            result["auto_plan"] = {
+                "triggered": auto_plan_result.get("triggered", False),
+                "created_count": auto_plan_result.get("created_count", 0),
+                "skipped_count": auto_plan_result.get("skipped_count", 0),
+            }
+        except Exception:
+            LOGGER.exception("Failed to auto-plan routes during MQTT ingestion")
 
     for pending in pending_alert_dispatches:
         try:

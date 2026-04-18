@@ -85,6 +85,27 @@ class RoutePlanResponse(BaseModel):
     vehicle_routes: list[RoutePlanVehicleResponse] | None = None
     unassigned_bin_ids: list[int] = Field(default_factory=list)
     total_estimated_load_kg: float | None = None
+    baseline_distance_km: float | None = None
+    estimated_fuel_saved_liters: float | None = None
+    recommended_start_at: datetime | None = None
+    efficiency_reasoning: list[str] = Field(default_factory=list)
+
+
+class RouteOptimizationSummaryResponse(BaseModel):
+    """Optimization and efficiency metadata for one persisted route."""
+
+    planner_type: str
+    algorithm: str
+    recommended_start_at: datetime | None = None
+    baseline_distance_km: float | None = None
+    estimated_distance_km: float | None = None
+    estimated_fuel_saved_liters: float | None = None
+    selected_stops: int | None = None
+    candidates_considered: int | None = None
+    skipped_due_to_shift: int | None = None
+    cluster_depot_id: int | None = None
+    cluster_area_id: int | None = None
+    efficiency_reasoning: list[str] = Field(default_factory=list)
 
 
 class RouteDraftCreateRequest(BaseModel):
@@ -119,6 +140,8 @@ class RouteResponse(BaseModel):
     updated_by: int | None = None
     stops_count: int | None = None
     start_point: StartPointResponse | None = None
+    auto_generated: bool = False
+    optimization_summary: RouteOptimizationSummaryResponse | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -151,3 +174,21 @@ class DriverRouteListResponse(BaseModel):
     limit: int
     offset: int
     items: list[DriverRouteSummaryResponse]
+
+
+class RouteAutoPlanTriggerRequest(BaseModel):
+    """Payload for triggering automatic intelligent route draft generation."""
+
+    route_date: date | None = None
+    force: bool = False
+
+
+class RouteAutoPlanTriggerResponse(BaseModel):
+    """Result of an automatic route draft generation run."""
+
+    route_date: date
+    triggered: bool
+    created_count: int
+    skipped_count: int
+    created_routes: list[RouteResponse]
+    reasons: list[str] = Field(default_factory=list)

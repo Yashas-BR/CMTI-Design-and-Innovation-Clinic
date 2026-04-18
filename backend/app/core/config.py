@@ -89,6 +89,21 @@ class Settings(BaseSettings):
     route_matrix_timeout_seconds: float = 8.0
     route_matrix_local_graph_file: str = ""
 
+    # Automatic intelligent route planning
+    route_auto_plan_enabled: bool = True
+    route_auto_plan_min_fill_pct: float = 80.0
+    route_auto_plan_overflow_only: bool = False
+    route_auto_plan_min_stops: int = 3
+    route_auto_plan_max_stops: int = 60
+    route_auto_plan_target_shift_minutes: int = 480
+    route_auto_plan_avg_speed_kmph: float = 22.0
+    route_auto_plan_service_minutes_per_stop: float = 4.0
+    route_auto_plan_cooldown_minutes: int = 20
+    route_auto_plan_overlap_threshold: float = 0.65
+    route_auto_plan_default_start_hour_utc: int = 6
+    route_auto_plan_system_user_id: int | None = None
+    route_plan_efficiency_baseline_km_per_liter: float = 3.5
+
     class Config:
         """Pydantic config."""
 

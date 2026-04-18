@@ -1,12 +1,7 @@
+import AdminSimulatorPanel from "@/components/role/admin/AdminSimulatorPanel";
 import RoleDashboardLayout from "@/components/role/RoleDashboardLayout";
 import RoleSectionPlaceholderCard from "@/components/role/RoleSectionPlaceholderCard";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { getApiBaseUrl } from "@/lib/authApi";
 import {
   ADMIN_DASHBOARD_NAV_ITEMS,
   type DashboardNavItem,
@@ -27,6 +22,7 @@ function AuthorityAdminDashboardPage({
   onLogout,
 }: AuthorityAdminDashboardPageProps) {
   const location = useLocation();
+  const apiBaseUrl = getApiBaseUrl();
 
   const activeNavItem = useMemo<DashboardNavItem>(() => {
     return (
@@ -37,6 +33,7 @@ function AuthorityAdminDashboardPage({
   }, [location.pathname]);
 
   const isOverview = activeNavItem.key === "overview";
+  const isSimulator = activeNavItem.key === "simulator";
 
   return (
     <RoleDashboardLayout
@@ -47,20 +44,11 @@ function AuthorityAdminDashboardPage({
       onLogout={onLogout}
       navigationItems={ADMIN_DASHBOARD_NAV_ITEMS}
     >
-      {isOverview ? (
-        <Card className="border-white/80 bg-white/85 shadow-md backdrop-blur">
-          <CardHeader>
-            <CardTitle>Admin Controls Planned Last</CardTitle>
-            <CardDescription>
-              Admin module is reserved for hackathon fake-data control utilities
-              and will be integrated in the final stage.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-sm text-slate-700">
-            Continue active implementation under the operator dashboard for core
-            product workflows.
-          </CardContent>
-        </Card>
+      {isOverview || isSimulator ? (
+        <AdminSimulatorPanel
+          accessToken={session.access_token}
+          apiBaseUrl={apiBaseUrl}
+        />
       ) : (
         <RoleSectionPlaceholderCard
           sectionLabel={`Admin: ${activeNavItem.label}`}

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
+  CircleMarker,
+  MapContainer,
+  Polyline,
+  TileLayer,
+  Tooltip,
+  useMap,
+} from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import {
   CalendarClock,
   CheckCircle2,
   ClipboardList,
@@ -19,6 +28,7 @@ import type {
   BinRecord,
   DepotRecord,
   DriverUser,
+  RouteAutoPlanResult,
   RouteAssignmentRecord,
   RoutePlanResult,
   RouteRecord,
@@ -234,6 +244,18 @@ function createIdempotencyKey(): string {
   return `ops-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+function RouteMapBounds({ points }: { points: Array<[number, number]> }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (points.length > 0) {
+      map.fitBounds(points, { padding: [26, 26] });
+    }
+  }, [map, points]);
+
+  return null;
+}
+
 function OperatorOperationsPanel({
   accessToken,
   apiBaseUrl,
@@ -261,6 +283,14 @@ function OperatorOperationsPanel({
 
   const [stopsLoading, setStopsLoading] = useState(false);
   const [stops, setStops] = useState<RouteStopRecord[]>([]);
+  const [selectedRouteRoadPolyline, setSelectedRouteRoadPolyline] = useState<
+    Array<[number, number]>
+  >([]);
+  const [selectedRoutePathSource, setSelectedRoutePathSource] = useState<
+    "road" | "direct"
+  >("direct");
+  const [selectedRoutePathLoading, setSelectedRoutePathLoading] =
+    useState(false);
 
   const [vehicleForm, setVehicleForm] =
     useState<VehicleFormState>(DEFAULT_VEHICLE_FORM);
@@ -274,6 +304,8 @@ function OperatorOperationsPanel({
   );
   const [routePlanResult, setRoutePlanResult] =
     useState<RoutePlanResult | null>(null);
+  const [autoPlanResult, setAutoPlanResult] =
+    useState<RouteAutoPlanResult | null>(null);
 
   const [routeDraftForm, setRouteDraftForm] = useState<RouteDraftFormState>(
     DEFAULT_ROUTE_DRAFT_FORM,
@@ -327,6 +359,17 @@ function OperatorOperationsPanel({
     return map;
   }, [bins]);
 
+  const binCoordinatesById = useMemo(() => {
+    const map = new Map<number, [number, number]>();
+    for (const bin of bins) {
+      if (bin.latitude == null || bin.longitude == null) {
+        continue;
+      }
+      map.set(bin.id, [bin.latitude, bin.longitude]);
+    }
+    return map;
+  }, [bins]);
+
   const selectedRoute = useMemo(() => {
     if (selectedRouteId == null) {
       return null;
@@ -343,6 +386,135 @@ function OperatorOperationsPanel({
     });
   }, [routes, routeStatusFilter, routeDateFilter]);
 
+  const selectedRoutePolyline = useMemo<Array<[number, number]>>(() => {
+    return stops
+      .slice()
+      .sort((left, right) => left.stop_sequence - right.stop_sequence)
+      .map((stop) => binCoordinatesById.get(stop.bin_id) ?? null)
+      .filter((item): item is [number, number] => item != null);
+  }, [stops, binCoordinatesById]);
+
+  const selectedRouteDirectPath = useMemo<Array<[number, number]>>(() => {
+    const path: Array<[number, number]> = [];
+
+    if (
+      selectedRoute?.start_point?.latitude != null &&
+      selectedRoute?.start_point?.longitude != null
+    ) {
+      path.push([
+        selectedRoute.start_point.latitude,
+        selectedRoute.start_point.longitude,
+      ]);
+    }
+
+    path.push(...selectedRoutePolyline);
+    return path;
+  }, [selectedRoute, selectedRoutePolyline]);
+
+  const selectedRoutePathPolyline = useMemo<Array<[number, number]>>(() => {
+    if (selectedRouteRoadPolyline.length > 1) {
+      return selectedRouteRoadPolyline;
+    }
+    return selectedRouteDirectPath;
+  }, [selectedRouteRoadPolyline, selectedRouteDirectPath]);
+
+  const selectedRouteMapCenter = useMemo<[number, number]>(() => {
+    if (
+      selectedRoute?.start_point?.latitude != null &&
+      selectedRoute?.start_point?.longitude != null
+    ) {
+      return [
+        selectedRoute.start_point.latitude,
+        selectedRoute.start_point.longitude,
+      ];
+    }
+    if (selectedRoutePolyline.length > 0) {
+      return selectedRoutePolyline[0];
+    }
+    return [12.9716, 77.5946];
+  }, [selectedRoute, selectedRoutePolyline]);
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchRoadSnappedPath = async () => {
+      if (selectedRouteId == null || selectedRouteDirectPath.length < 2) {
+        if (active) {
+          setSelectedRouteRoadPolyline([]);
+          setSelectedRoutePathSource("direct");
+          setSelectedRoutePathLoading(false);
+        }
+        return;
+      }
+
+      setSelectedRoutePathLoading(true);
+
+      try {
+        const coordinateList = selectedRouteDirectPath
+          .map(([latitude, longitude]) => `${longitude},${latitude}`)
+          .join(";");
+
+        const response = await axios.get<{
+          code: string;
+          routes?: Array<{
+            geometry?: {
+              coordinates?: Array<[number, number]>;
+            };
+          }>;
+        }>(
+          `https://router.project-osrm.org/route/v1/driving/${coordinateList}`,
+          {
+            params: {
+              overview: "full",
+              geometries: "geojson",
+              alternatives: false,
+              steps: false,
+            },
+            timeout: 12000,
+          },
+        );
+
+        const geometry = response.data.routes?.[0]?.geometry?.coordinates ?? [];
+        const roadPoints = geometry
+          .map(([longitude, latitude]) => {
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+              return null;
+            }
+            return [latitude, longitude] as [number, number];
+          })
+          .filter((item): item is [number, number] => item != null);
+
+        if (!active) {
+          return;
+        }
+
+        if (response.data.code === "Ok" && roadPoints.length > 1) {
+          setSelectedRouteRoadPolyline(roadPoints);
+          setSelectedRoutePathSource("road");
+        } else {
+          setSelectedRouteRoadPolyline([]);
+          setSelectedRoutePathSource("direct");
+        }
+      } catch {
+        if (!active) {
+          return;
+        }
+        setSelectedRouteRoadPolyline([]);
+        setSelectedRoutePathSource("direct");
+      } finally {
+        if (active) {
+          setSelectedRoutePathLoading(false);
+        }
+      }
+    };
+
+    void fetchRoadSnappedPath();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedRouteId, selectedRouteDirectPath]);
+
   const overviewMetrics = useMemo(() => {
     const activeShifts = shifts.filter(
       (item) => item.status === "active",
@@ -357,7 +529,7 @@ function OperatorOperationsPanel({
       (item) => item.status === "in_progress",
     ).length;
     const pendingAssignments = assignments.filter(
-      (item) => item.status === "pending",
+      (item) => item.status === "assigned",
     ).length;
     const servicedStops = stops.filter(
       (item) => item.status === "serviced",
@@ -379,96 +551,132 @@ function OperatorOperationsPanel({
     };
   }, [vehicles, shifts, routes, assignments, stops]);
 
-  const fetchCoreResources = useCallback(async () => {
-    setLoadingCore(true);
-    setErrorMessage("");
-
+  const triggerAutoPlanning = useCallback(async () => {
     try {
-      const [
-        vehiclesRes,
-        shiftsRes,
-        routesRes,
-        driversRes,
-        depotsRes,
-        binsRes,
-      ] = await Promise.all([
-        axios.get<ListResponse<VehicleRecord>>(
-          `${apiBaseUrl}/operations/vehicles`,
-          {
-            headers,
-            params: { limit: LIST_LIMIT, offset: 0 },
-          },
-        ),
-        axios.get<ListResponse<ShiftRecord>>(
-          `${apiBaseUrl}/operations/shifts`,
-          {
-            headers,
-            params: { limit: LIST_LIMIT, offset: 0 },
-          },
-        ),
-        axios.get<ListResponse<RouteRecord>>(
-          `${apiBaseUrl}/operations/routes`,
-          {
-            headers,
-            params: { limit: LIST_LIMIT, offset: 0 },
-          },
-        ),
-        axios.get<ListResponse<DriverUser>>(`${apiBaseUrl}/users`, {
-          headers,
-          params: {
-            role: "driver",
-            is_active: true,
-            limit: LIST_LIMIT,
-            offset: 0,
-          },
-        }),
-        axios.get<ListResponse<DepotRecord>>(
-          `${apiBaseUrl}/master-data/depots`,
-          {
-            headers,
-            params: { is_active: true, limit: LIST_LIMIT, offset: 0 },
-          },
-        ),
-        axios.get<ListResponse<BinRecord>>(`${apiBaseUrl}/bins`, {
-          headers,
-          params: { is_active: true, limit: LIST_LIMIT, offset: 0 },
-        }),
-      ]);
+      const response = await axios.post<RouteAutoPlanResult>(
+        `${apiBaseUrl}/operations/routes/auto-plan`,
+        {
+          route_date: todayDateIso,
+          force: false,
+        },
+        { headers },
+      );
 
-      const nextVehicles = vehiclesRes.data.items;
-      const nextShifts = shiftsRes.data.items;
-      const nextRoutes = routesRes.data.items;
+      setAutoPlanResult(response.data);
 
-      setVehicles(nextVehicles);
-      setShifts(nextShifts);
-      setRoutes(nextRoutes);
-      setDrivers(driversRes.data.items);
-      setDepots(depotsRes.data.items);
-      setBins(binsRes.data.items);
-
-      if (nextRoutes.length === 0) {
-        setSelectedRouteId(null);
-      } else if (
-        selectedRouteId == null ||
-        !nextRoutes.some((item) => item.id === selectedRouteId)
-      ) {
-        setSelectedRouteId(nextRoutes[0].id);
+      if (response.data.created_count > 0) {
+        setNoticeMessage(
+          `Auto-planner created ${response.data.created_count} optimized draft route(s).`,
+        );
       }
     } catch (error) {
+      setAutoPlanResult(null);
       setErrorMessage(
-        extractApiErrorMessage(error, "Failed to load operations data."),
+        extractApiErrorMessage(
+          error,
+          "Failed to run automatic intelligent planning.",
+        ),
       );
-      setVehicles([]);
-      setShifts([]);
-      setRoutes([]);
-      setDrivers([]);
-      setDepots([]);
-      setBins([]);
-      setSelectedRouteId(null);
-    } finally {
-      setLoadingCore(false);
     }
-  }, [apiBaseUrl, headers, selectedRouteId]);
+  }, [apiBaseUrl, headers]);
+
+  const fetchCoreResources = useCallback(
+    async (options?: { triggerAutoPlan?: boolean }) => {
+      setLoadingCore(true);
+      setErrorMessage("");
+
+      try {
+        if (options?.triggerAutoPlan) {
+          await triggerAutoPlanning();
+        }
+
+        const [
+          vehiclesRes,
+          shiftsRes,
+          routesRes,
+          driversRes,
+          depotsRes,
+          binsRes,
+        ] = await Promise.all([
+          axios.get<ListResponse<VehicleRecord>>(
+            `${apiBaseUrl}/operations/vehicles`,
+            {
+              headers,
+              params: { limit: LIST_LIMIT, offset: 0 },
+            },
+          ),
+          axios.get<ListResponse<ShiftRecord>>(
+            `${apiBaseUrl}/operations/shifts`,
+            {
+              headers,
+              params: { limit: LIST_LIMIT, offset: 0 },
+            },
+          ),
+          axios.get<ListResponse<RouteRecord>>(
+            `${apiBaseUrl}/operations/routes`,
+            {
+              headers,
+              params: { limit: LIST_LIMIT, offset: 0 },
+            },
+          ),
+          axios.get<ListResponse<DriverUser>>(`${apiBaseUrl}/users`, {
+            headers,
+            params: {
+              role: "driver",
+              is_active: true,
+              limit: LIST_LIMIT,
+              offset: 0,
+            },
+          }),
+          axios.get<ListResponse<DepotRecord>>(
+            `${apiBaseUrl}/master-data/depots`,
+            {
+              headers,
+              params: { is_active: true, limit: LIST_LIMIT, offset: 0 },
+            },
+          ),
+          axios.get<ListResponse<BinRecord>>(`${apiBaseUrl}/bins`, {
+            headers,
+            params: { is_active: true, limit: LIST_LIMIT, offset: 0 },
+          }),
+        ]);
+
+        const nextVehicles = vehiclesRes.data.items;
+        const nextShifts = shiftsRes.data.items;
+        const nextRoutes = routesRes.data.items;
+
+        setVehicles(nextVehicles);
+        setShifts(nextShifts);
+        setRoutes(nextRoutes);
+        setDrivers(driversRes.data.items);
+        setDepots(depotsRes.data.items);
+        setBins(binsRes.data.items);
+
+        if (nextRoutes.length === 0) {
+          setSelectedRouteId(null);
+        } else if (
+          selectedRouteId == null ||
+          !nextRoutes.some((item) => item.id === selectedRouteId)
+        ) {
+          setSelectedRouteId(nextRoutes[0].id);
+        }
+      } catch (error) {
+        setErrorMessage(
+          extractApiErrorMessage(error, "Failed to load operations data."),
+        );
+        setVehicles([]);
+        setShifts([]);
+        setRoutes([]);
+        setDrivers([]);
+        setDepots([]);
+        setBins([]);
+        setSelectedRouteId(null);
+      } finally {
+        setLoadingCore(false);
+      }
+    },
+    [apiBaseUrl, headers, selectedRouteId, triggerAutoPlanning],
+  );
 
   const fetchAssignmentsForRoute = useCallback(
     async (routeId: number) => {
@@ -519,7 +727,7 @@ function OperatorOperationsPanel({
   );
 
   useEffect(() => {
-    void fetchCoreResources();
+    void fetchCoreResources({ triggerAutoPlan: true });
   }, [fetchCoreResources]);
 
   useEffect(() => {
@@ -1004,7 +1212,10 @@ function OperatorOperationsPanel({
           Operations data uses list API limit {LIST_LIMIT}. If records exceed
           this, apply filters or paging in a future iteration.
         </p>
-        <Button variant="outline" onClick={() => void fetchCoreResources()}>
+        <Button
+          variant="outline"
+          onClick={() => void fetchCoreResources({ triggerAutoPlan: true })}
+        >
           <RefreshCw className="mr-1 h-4 w-4" />
           Refresh Operations Data
         </Button>
@@ -1058,7 +1269,7 @@ function OperatorOperationsPanel({
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
                 <ClipboardList className="h-4 w-4" />
-                Pending Assignments
+                Open Assignments
               </CardDescription>
               <CardTitle className="text-2xl">
                 {overviewMetrics.pendingAssignments}
@@ -1783,6 +1994,46 @@ function OperatorOperationsPanel({
                   </div>
                 </div>
 
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Recommended Start</p>
+                    <p className="font-medium text-slate-900">
+                      {formatDateTime(routePlanResult.recommended_start_at)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Baseline Distance</p>
+                    <p className="font-medium text-slate-900">
+                      {routePlanResult.baseline_distance_km != null
+                        ? `${routePlanResult.baseline_distance_km.toFixed(2)} km`
+                        : "n/a"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">
+                      Estimated Fuel Saved
+                    </p>
+                    <p className="font-medium text-slate-900">
+                      {routePlanResult.estimated_fuel_saved_liters != null
+                        ? `${routePlanResult.estimated_fuel_saved_liters.toFixed(2)} L`
+                        : "n/a"}
+                    </p>
+                  </div>
+                </div>
+
+                {routePlanResult.efficiency_reasoning.length > 0 ? (
+                  <div className="rounded-lg border bg-emerald-50/80 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                      Why This Plan Is Efficient
+                    </p>
+                    <ul className="space-y-1 text-sm text-emerald-900">
+                      {routePlanResult.efficiency_reasoning.map((reason) => (
+                        <li key={reason}>- {reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1816,6 +2067,58 @@ function OperatorOperationsPanel({
       </TabsContent>
 
       <TabsContent value="routes" className="space-y-4">
+        <Card className="border-white/80 bg-white/85 shadow-md backdrop-blur">
+          <CardHeader>
+            <CardTitle>Automatic Intelligent Planner</CardTitle>
+            <CardDescription>
+              Continuously monitors live bins and drafts efficient routes by
+              depot/service context.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!autoPlanResult ? (
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                Auto-planner has not reported a run in this session.
+              </p>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Route Date</p>
+                    <p className="font-medium text-slate-900">
+                      {autoPlanResult.route_date}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Drafts Created</p>
+                    <p className="font-medium text-slate-900">
+                      {autoPlanResult.created_count}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Skipped Clusters</p>
+                    <p className="font-medium text-slate-900">
+                      {autoPlanResult.skipped_count}
+                    </p>
+                  </div>
+                </div>
+                {autoPlanResult.reasons.length > 0 ? (
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      Auto-Plan Decisions
+                    </p>
+                    <ul className="space-y-1 text-sm text-slate-800">
+                      {autoPlanResult.reasons.slice(0, 6).map((reason) => (
+                        <li key={reason}>- {reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
         <Card className="border-white/80 bg-white/85 shadow-md backdrop-blur">
           <CardHeader>
             <CardTitle>Create Draft Route</CardTitle>
@@ -1980,6 +2283,7 @@ function OperatorOperationsPanel({
                     <TableHead>Depot</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Stops</TableHead>
+                    <TableHead>Start</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1987,7 +2291,14 @@ function OperatorOperationsPanel({
                   {filteredRoutes.map((route) => (
                     <TableRow key={route.id}>
                       <TableCell className="font-medium">
-                        {route.route_code}
+                        <div className="flex items-center gap-2">
+                          <span>{route.route_code}</span>
+                          {route.auto_generated ? (
+                            <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                              auto
+                            </Badge>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell>{route.route_date}</TableCell>
                       <TableCell>
@@ -1998,6 +2309,12 @@ function OperatorOperationsPanel({
                       </TableCell>
                       <TableCell>{route.status}</TableCell>
                       <TableCell>{route.stops_count ?? "n/a"}</TableCell>
+                      <TableCell>
+                        {formatDateTime(
+                          route.optimization_summary?.recommended_start_at ??
+                            null,
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-2">
                           <Button
@@ -2018,7 +2335,7 @@ function OperatorOperationsPanel({
                               void routeTransition(route.id, "publish")
                             }
                           >
-                            Publish
+                            Confirm Plan
                           </Button>
                           <Button
                             size="sm"
@@ -2053,6 +2370,155 @@ function OperatorOperationsPanel({
                   ))}
                 </TableBody>
               </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-white/80 bg-white/85 shadow-md backdrop-blur">
+          <CardHeader>
+            <CardTitle>Selected Route Intelligence</CardTitle>
+            <CardDescription>
+              Efficiency rationale, recommended dispatch time, and planned path
+              map.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!selectedRoute ? (
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                Select a route from the lifecycle table to view intelligent
+                planning details and map.
+              </p>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Route</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedRoute.route_code}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Planner</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedRoute.optimization_summary?.planner_type ??
+                        "manual"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Recommended Start</p>
+                    <p className="font-medium text-slate-900">
+                      {formatDateTime(
+                        selectedRoute.optimization_summary
+                          ?.recommended_start_at ?? null,
+                      )}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Estimated Distance</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedRoute.optimization_summary
+                        ?.estimated_distance_km != null
+                        ? `${selectedRoute.optimization_summary.estimated_distance_km.toFixed(2)} km`
+                        : selectedRoute.total_distance_km != null
+                          ? `${selectedRoute.total_distance_km.toFixed(2)} km`
+                          : "n/a"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Fuel Saved</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedRoute.optimization_summary
+                        ?.estimated_fuel_saved_liters != null
+                        ? `${selectedRoute.optimization_summary.estimated_fuel_saved_liters.toFixed(2)} L`
+                        : "n/a"}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedRoute.optimization_summary?.efficiency_reasoning
+                  ?.length ? (
+                  <div className="rounded-lg border bg-emerald-50/80 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                      Why This Is Efficient
+                    </p>
+                    <ul className="space-y-1 text-sm text-emerald-900">
+                      {selectedRoute.optimization_summary.efficiency_reasoning.map(
+                        (reason) => (
+                          <li key={reason}>- {reason}</li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div className="h-90 overflow-hidden rounded-xl border bg-white">
+                  <MapContainer
+                    center={selectedRouteMapCenter}
+                    zoom={13}
+                    scrollWheelZoom={false}
+                    className="h-full w-full"
+                  >
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    {selectedRoutePathPolyline.length > 0 ? (
+                      <RouteMapBounds points={selectedRoutePathPolyline} />
+                    ) : null}
+                    {selectedRoutePathPolyline.length > 1 ? (
+                      <Polyline
+                        positions={selectedRoutePathPolyline}
+                        pathOptions={{
+                          color: "#0f766e",
+                          weight: 4,
+                          opacity: 0.75,
+                        }}
+                      />
+                    ) : null}
+                    {selectedRoutePolyline.map((point, index) => (
+                      <CircleMarker
+                        key={`${point[0]}-${point[1]}-${index}`}
+                        center={point}
+                        radius={8}
+                        pathOptions={{
+                          color: "#0f766e",
+                          fillColor: "#14b8a6",
+                          fillOpacity: 0.65,
+                          weight: 2,
+                        }}
+                      >
+                        <Tooltip>Stop {index + 1}</Tooltip>
+                      </CircleMarker>
+                    ))}
+                    {selectedRoute?.start_point?.latitude != null &&
+                    selectedRoute?.start_point?.longitude != null ? (
+                      <CircleMarker
+                        center={[
+                          selectedRoute.start_point.latitude,
+                          selectedRoute.start_point.longitude,
+                        ]}
+                        radius={10}
+                        pathOptions={{
+                          color: "#1d4ed8",
+                          fillColor: "#60a5fa",
+                          fillOpacity: 0.7,
+                          weight: 2,
+                        }}
+                      >
+                        <Tooltip>Start Depot / Start Point</Tooltip>
+                      </CircleMarker>
+                    ) : null}
+                  </MapContainer>
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  {selectedRoutePathLoading
+                    ? "Snapping path to real road network..."
+                    : selectedRoutePathSource === "road"
+                      ? "Showing road-following route path (OSRM free routing)."
+                      : "Road path unavailable, showing direct fallback path."}
+                </p>
+              </>
             )}
           </CardContent>
         </Card>
@@ -2238,7 +2704,7 @@ function OperatorOperationsPanel({
                             size="sm"
                             variant="outline"
                             disabled={
-                              assignment.status !== "pending" ||
+                              assignment.status !== "assigned" ||
                               globalActionKey ===
                                 `assignment-accept-${assignment.id}`
                             }
@@ -2253,7 +2719,7 @@ function OperatorOperationsPanel({
                             size="sm"
                             variant="outline"
                             disabled={
-                              assignment.status !== "pending" ||
+                              assignment.status !== "assigned" ||
                               globalActionKey ===
                                 `assignment-reject-${assignment.id}`
                             }

@@ -126,6 +126,74 @@ async def test_create_route_route_returns_created() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auto_plan_routes_route_returns_summary() -> None:
+    """Auto-plan endpoint should return creation summary and created routes."""
+    mock_result = {
+        "route_date": "2026-04-18",
+        "triggered": True,
+        "created_count": 1,
+        "skipped_count": 0,
+        "created_routes": [
+            {
+                "id": 7101,
+                "org_id": 1,
+                "route_code": "AUTO-20260418-D2-083000-01",
+                "route_date": "2026-04-18",
+                "depot_id": 2,
+                "status": "draft",
+                "total_distance_km": None,
+                "estimated_duration_min": None,
+                "optimization_run_id": 8801,
+                "created_by": 10,
+                "updated_by": 10,
+                "stops_count": 4,
+                "start_point": {
+                    "source": "route_depot",
+                    "depot_id": 2,
+                    "area_id": None,
+                    "latitude": 12.9716,
+                    "longitude": 77.5946,
+                },
+                "auto_generated": True,
+                "optimization_summary": {
+                    "planner_type": "auto_monitoring",
+                    "algorithm": "greedy_nn_2opt_v1",
+                    "recommended_start_at": "2026-04-18T08:35:00Z",
+                    "baseline_distance_km": 12.4,
+                    "estimated_distance_km": 10.1,
+                    "estimated_fuel_saved_liters": 0.66,
+                    "selected_stops": 4,
+                    "candidates_considered": 6,
+                    "skipped_due_to_shift": 0,
+                    "cluster_depot_id": 2,
+                    "cluster_area_id": None,
+                    "efficiency_reasoning": ["test reason"],
+                },
+                "created_at": "2026-04-18T08:30:00Z",
+                "updated_at": "2026-04-18T08:30:00Z",
+            }
+        ],
+        "reasons": ["created auto draft"],
+    }
+
+    app.dependency_overrides[require_authority_user] = _authority_user_override
+    try:
+        with patch("app.api.v1.operations.auto_plan_routes_from_live_state", new=AsyncMock(return_value=mock_result)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/v1/operations/routes/auto-plan",
+                    json={"route_date": "2026-04-18", "force": False},
+                )
+    finally:
+        app.dependency_overrides.pop(require_authority_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["triggered"] is True
+    assert response.json()["created_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_list_routes_route_returns_items() -> None:
     """Route list endpoint should return paginated payload."""
     mock_result = {

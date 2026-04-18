@@ -13,6 +13,7 @@ from .mqtt import router as mqtt_router
 from .notifications import router as notifications_router
 from .operations import router as operations_router
 from .realtime import router as realtime_router
+from .simulator import router as simulator_router
 from .telemetry import router as telemetry_router
 from .users import router as users_router
 
@@ -30,5 +31,6 @@ router.include_router(master_data_router, tags=["master-data"])
 router.include_router(bins_router, tags=["bins"])
 router.include_router(devices_router, tags=["devices"])
 router.include_router(operations_router, tags=["operations"])
+router.include_router(simulator_router, tags=["simulator"])
 
 __all__ = ["router"]

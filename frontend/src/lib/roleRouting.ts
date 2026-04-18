@@ -13,6 +13,11 @@ export type DashboardNavItem = {
 
 export const ADMIN_DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   { key: "overview", label: "Overview", path: ADMIN_DASHBOARD_PATH },
+  {
+    key: "simulator",
+    label: "Device Simulator",
+    path: `${ADMIN_DASHBOARD_PATH}/simulator`,
+  },
   { key: "users", label: "Users", path: `${ADMIN_DASHBOARD_PATH}/users` },
   {
     key: "master-data",
@@ -36,6 +41,7 @@ export const ADMIN_DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     path: `${ADMIN_DASHBOARD_PATH}/realtime`,
   },
 ];
+
 
 export const OPERATOR_DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   { key: "overview", label: "Overview", path: OPERATOR_DASHBOARD_PATH },

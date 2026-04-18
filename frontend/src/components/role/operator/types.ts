@@ -201,6 +201,21 @@ export type RouteStartPoint = {
   longitude: number | null;
 };
 
+export type RouteOptimizationSummary = {
+  planner_type: string;
+  algorithm: string;
+  recommended_start_at: string | null;
+  baseline_distance_km: number | null;
+  estimated_distance_km: number | null;
+  estimated_fuel_saved_liters: number | null;
+  selected_stops: number | null;
+  candidates_considered: number | null;
+  skipped_due_to_shift: number | null;
+  cluster_depot_id: number | null;
+  cluster_area_id: number | null;
+  efficiency_reasoning: string[];
+};
+
 export type RouteRecord = {
   id: number;
   org_id: number;
@@ -215,6 +230,8 @@ export type RouteRecord = {
   updated_by: number | null;
   stops_count: number | null;
   start_point: RouteStartPoint | null;
+  auto_generated: boolean;
+  optimization_summary: RouteOptimizationSummary | null;
   created_at: string;
   updated_at: string;
 };
@@ -246,6 +263,19 @@ export type RoutePlanResult = {
   items: RoutePlanStopRecord[];
   unassigned_bin_ids: number[];
   total_estimated_load_kg: number | null;
+  baseline_distance_km: number | null;
+  estimated_fuel_saved_liters: number | null;
+  recommended_start_at: string | null;
+  efficiency_reasoning: string[];
+};
+
+export type RouteAutoPlanResult = {
+  route_date: string;
+  triggered: boolean;
+  created_count: number;
+  skipped_count: number;
+  created_routes: RouteRecord[];
+  reasons: string[];
 };
 
 export type RouteAssignmentRecord = {
