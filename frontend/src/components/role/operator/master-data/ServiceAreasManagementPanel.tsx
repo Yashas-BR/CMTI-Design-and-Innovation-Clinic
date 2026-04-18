@@ -11,6 +11,7 @@ import {
 
 import ServiceAreaLocationPickerDialog from "@/components/role/operator/master-data/ServiceAreaLocationPickerDialog";
 import type {
+  DepotRecord,
   ServiceAreaFormPayload,
   ServiceAreaRecord,
 } from "@/components/role/operator/types";
@@ -63,6 +64,13 @@ type ServiceAreaListResponse = {
   limit: number;
   offset: number;
   items: ServiceAreaRecord[];
+};
+
+type DepotListResponse = {
+  total: number;
+  limit: number;
+  offset: number;
+  items: DepotRecord[];
 };
 
 const LIST_LIMIT = 100;
@@ -119,6 +127,7 @@ function ServiceAreasManagementPanel({
 }: ServiceAreasManagementPanelProps) {
   const [loading, setLoading] = useState(true);
   const [areas, setAreas] = useState<ServiceAreaRecord[]>([]);
+  const [depots, setDepots] = useState<DepotRecord[]>([]);
   const [totalAreas, setTotalAreas] = useState(0);
 
   const [queryText, setQueryText] = useState("");
@@ -148,22 +157,49 @@ function ServiceAreasManagementPanel({
   const fetchAreas = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await axios.get<ServiceAreaListResponse>(
-        `${apiBaseUrl}/master-data/service-areas`,
-        {
+      const [areasResult, depotsResult] = await Promise.allSettled([
+        axios.get<ServiceAreaListResponse>(
+          `${apiBaseUrl}/master-data/service-areas`,
+          {
+            headers,
+            params: {
+              limit: LIST_LIMIT,
+              offset: 0,
+            },
+          },
+        ),
+        axios.get<DepotListResponse>(`${apiBaseUrl}/master-data/depots`, {
           headers,
           params: {
             limit: LIST_LIMIT,
             offset: 0,
           },
-        },
-      );
+        }),
+      ]);
 
-      setAreas(response.data.items);
-      setTotalAreas(response.data.total);
-      setErrorMessage("");
+      if (areasResult.status === "fulfilled") {
+        setAreas(areasResult.value.data.items);
+        setTotalAreas(areasResult.value.data.total);
+        setErrorMessage("");
+      } else {
+        setAreas([]);
+        setTotalAreas(0);
+        setErrorMessage(
+          extractApiErrorMessage(
+            areasResult.reason,
+            "Failed to load service areas.",
+          ),
+        );
+      }
+
+      if (depotsResult.status === "fulfilled") {
+        setDepots(depotsResult.value.data.items);
+      } else {
+        setDepots([]);
+      }
     } catch (error) {
       setAreas([]);
+      setDepots([]);
       setTotalAreas(0);
       setErrorMessage(
         extractApiErrorMessage(error, "Failed to load service areas."),
@@ -656,6 +692,9 @@ function ServiceAreasManagementPanel({
         onOpenChange={setLocationDialogOpen}
         selectedPoint={selectedPoint}
         initialBoundaryGeoJson={formState.boundary_geojson}
+        existingDepots={depots}
+        existingServiceAreas={areas}
+        currentServiceAreaId={editingArea?.id ?? null}
         onApply={({ center, boundaryGeoJson }) => {
           setFormState((prev) => ({
             ...prev,

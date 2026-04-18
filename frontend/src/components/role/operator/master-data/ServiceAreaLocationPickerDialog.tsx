@@ -6,10 +6,15 @@ import {
   Polygon,
   Polyline,
   TileLayer,
+  Tooltip,
   useMap,
   useMapEvents,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import type {
+  DepotRecord,
+  ServiceAreaRecord,
+} from "@/components/role/operator/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,6 +31,9 @@ type ServiceAreaLocationPickerDialogProps = {
   onOpenChange: (open: boolean) => void;
   selectedPoint: [number, number] | null;
   initialBoundaryGeoJson: string;
+  existingDepots: DepotRecord[];
+  existingServiceAreas: ServiceAreaRecord[];
+  currentServiceAreaId?: number | null;
   onApply: (payload: {
     center: [number, number] | null;
     boundaryGeoJson: string;
@@ -45,6 +53,59 @@ function isSamePoint(
   );
 }
 
+function extractRawRing(candidate: unknown): unknown[] | null {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const shape = candidate as {
+    type?: string;
+    coordinates?: unknown;
+    geometry?: unknown;
+    features?: unknown;
+  };
+
+  if (shape.type === "Feature") {
+    return extractRawRing(shape.geometry);
+  }
+
+  if (shape.type === "FeatureCollection") {
+    const features = Array.isArray(shape.features) ? shape.features : [];
+    for (const feature of features) {
+      const ring = extractRawRing(feature);
+      if (ring) {
+        return ring;
+      }
+    }
+    return null;
+  }
+
+  let rawRing: unknown[] | null = null;
+  if (shape.type === "Polygon") {
+    const coordinates = Array.isArray(shape.coordinates)
+      ? shape.coordinates
+      : null;
+    if (!coordinates || !Array.isArray(coordinates[0])) {
+      return null;
+    }
+    rawRing = coordinates[0] as unknown[];
+  } else if (shape.type === "MultiPolygon") {
+    const coordinates = Array.isArray(shape.coordinates)
+      ? shape.coordinates
+      : null;
+    if (
+      !coordinates ||
+      !Array.isArray(coordinates[0]) ||
+      !Array.isArray((coordinates[0] as unknown[])[0])
+    ) {
+      return null;
+    }
+    rawRing = (coordinates[0] as unknown[])[0] as unknown[];
+  }
+
+  return rawRing;
+}
+
 function parseBoundaryPoints(boundaryGeoJson: string): [number, number][] {
   const text = boundaryGeoJson.trim();
   if (!text) {
@@ -52,38 +113,39 @@ function parseBoundaryPoints(boundaryGeoJson: string): [number, number][] {
   }
 
   const parsed: unknown = JSON.parse(text);
-  if (!parsed || typeof parsed !== "object") {
+  const rawRing = extractRawRing(parsed);
+  if (!rawRing) {
     return [];
   }
 
-  const candidate = parsed as {
-    type?: string;
-    coordinates?: unknown;
-  };
+  const points: [number, number][] = [];
+  for (const rawCoordinate of rawRing) {
+    if (!Array.isArray(rawCoordinate) || rawCoordinate.length < 2) {
+      continue;
+    }
 
-  let rawRing: unknown[] | null = null;
-  if (candidate.type === "Polygon") {
-    const coordinates = Array.isArray(candidate.coordinates)
-      ? candidate.coordinates
-      : null;
-    if (!coordinates || !Array.isArray(coordinates[0])) {
-      return [];
+    const longitude = Number(rawCoordinate[0]);
+    const latitude = Number(rawCoordinate[1]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      continue;
     }
-    rawRing = coordinates[0] as unknown[];
-  } else if (candidate.type === "MultiPolygon") {
-    const coordinates = Array.isArray(candidate.coordinates)
-      ? candidate.coordinates
-      : null;
-    if (
-      !coordinates ||
-      !Array.isArray(coordinates[0]) ||
-      !Array.isArray((coordinates[0] as unknown[])[0])
-    ) {
-      return [];
-    }
-    rawRing = (coordinates[0] as unknown[])[0] as unknown[];
+    points.push([latitude, longitude]);
   }
 
+  if (points.length >= 2 && isSamePoint(points[0], points[points.length - 1])) {
+    points.pop();
+  }
+
+  return points;
+}
+
+function parseBoundaryPointsFromUnknown(
+  boundaryGeoJson: unknown,
+): [number, number][] {
+  if (!boundaryGeoJson || typeof boundaryGeoJson !== "object") {
+    return [];
+  }
+  const rawRing = extractRawRing(boundaryGeoJson);
   if (!rawRing) {
     return [];
   }
@@ -212,6 +274,9 @@ function ServiceAreaLocationPickerDialog({
   onOpenChange,
   selectedPoint,
   initialBoundaryGeoJson,
+  existingDepots,
+  existingServiceAreas,
+  currentServiceAreaId,
   onApply,
 }: ServiceAreaLocationPickerDialogProps) {
   const [mode, setMode] = useState<PickerMode>("boundary");
@@ -246,6 +311,76 @@ function ServiceAreaLocationPickerDialog({
     return `${draftPoint[0].toFixed(6)}, ${draftPoint[1].toFixed(6)}`;
   }, [draftPoint]);
 
+  const referenceDepotPoints = useMemo(() => {
+    return existingDepots
+      .map((depot) => {
+        if (depot.latitude == null || depot.longitude == null) {
+          return null;
+        }
+        return {
+          id: depot.id,
+          isActive: depot.is_active,
+          point: [depot.latitude, depot.longitude] as [number, number],
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [existingDepots]);
+
+  const referenceAreaPolygons = useMemo(() => {
+    return existingServiceAreas
+      .filter((area) => area.id !== currentServiceAreaId)
+      .map((area) => ({
+        id: area.id,
+        name: area.name,
+        isActive: area.is_active,
+        points: parseBoundaryPointsFromUnknown(area.boundary_geojson),
+      }))
+      .filter((area) => area.points.length >= 3);
+  }, [currentServiceAreaId, existingServiceAreas]);
+
+  const referenceAreaCenters = useMemo(() => {
+    return existingServiceAreas
+      .filter((area) => area.id !== currentServiceAreaId)
+      .map((area) => {
+        if (area.center_latitude == null || area.center_longitude == null) {
+          return null;
+        }
+        return {
+          id: area.id,
+          name: area.name,
+          isActive: area.is_active,
+          point: [area.center_latitude, area.center_longitude] as [
+            number,
+            number,
+          ],
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [currentServiceAreaId, existingServiceAreas]);
+
+  const boundsPoints = useMemo<[number, number][]>(() => {
+    const points: [number, number][] = [...draftBoundaryPoints];
+    for (const area of referenceAreaPolygons) {
+      points.push(...area.points);
+    }
+    for (const area of referenceAreaCenters) {
+      points.push(area.point);
+    }
+    for (const depot of referenceDepotPoints) {
+      points.push(depot.point);
+    }
+    if (draftPoint) {
+      points.push(draftPoint);
+    }
+    return points;
+  }, [
+    draftBoundaryPoints,
+    draftPoint,
+    referenceAreaCenters,
+    referenceAreaPolygons,
+    referenceDepotPoints,
+  ]);
+
   const centerForMap = useMemo<[number, number]>(() => {
     if (draftPoint) {
       return draftPoint;
@@ -253,8 +388,23 @@ function ServiceAreaLocationPickerDialog({
     if (draftBoundaryPoints.length > 0) {
       return draftBoundaryPoints[0];
     }
+    if (referenceAreaCenters.length > 0) {
+      return referenceAreaCenters[0].point;
+    }
+    if (referenceDepotPoints.length > 0) {
+      return referenceDepotPoints[0].point;
+    }
+    if (referenceAreaPolygons.length > 0) {
+      return referenceAreaPolygons[0].points[0];
+    }
     return [12.9716, 77.5946];
-  }, [draftBoundaryPoints, draftPoint]);
+  }, [
+    draftBoundaryPoints,
+    draftPoint,
+    referenceAreaCenters,
+    referenceAreaPolygons,
+    referenceDepotPoints,
+  ]);
 
   const boundaryGeoJsonPreview = useMemo(() => {
     if (draftBoundaryPoints.length < 3) {
@@ -273,6 +423,7 @@ function ServiceAreaLocationPickerDialog({
           <DialogTitle>Service Area Map Editor</DialogTitle>
           <DialogDescription>
             Draw boundary points and set area center using the interactive map.
+            Existing depots and service area boundaries are shown for reference.
           </DialogDescription>
         </DialogHeader>
 
@@ -354,7 +505,7 @@ function ServiceAreaLocationPickerDialog({
             className="h-full w-full"
           >
             <MapResizeHandler />
-            <MapBounds points={draftBoundaryPoints} center={draftPoint} />
+            <MapBounds points={boundsPoints} center={draftPoint} />
             <MapClickHandler
               mode={mode}
               onSetCenter={setDraftPoint}
@@ -367,6 +518,62 @@ function ServiceAreaLocationPickerDialog({
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+
+            {referenceAreaPolygons.map((area) => (
+              <Polygon
+                key={area.id}
+                positions={area.points}
+                pathOptions={{
+                  color: area.isActive ? "#0f766e" : "#64748b",
+                  fillColor: area.isActive ? "#2dd4bf" : "#94a3b8",
+                  fillOpacity: 0.12,
+                  weight: 2,
+                  dashArray: area.isActive ? "" : "5, 7",
+                }}
+              >
+                <Tooltip sticky>
+                  {area.name} ({area.isActive ? "active" : "inactive"})
+                </Tooltip>
+              </Polygon>
+            ))}
+
+            {referenceAreaCenters.map((area) => (
+              <CircleMarker
+                key={`area-center-${area.id}`}
+                center={area.point}
+                radius={4}
+                pathOptions={{
+                  color: area.isActive ? "#0f766e" : "#64748b",
+                  fillColor: area.isActive ? "#2dd4bf" : "#94a3b8",
+                  fillOpacity: 0.75,
+                  weight: 2,
+                }}
+              >
+                <Tooltip sticky>
+                  {area.name} center ({area.point[0].toFixed(5)},{" "}
+                  {area.point[1].toFixed(5)})
+                </Tooltip>
+              </CircleMarker>
+            ))}
+
+            {referenceDepotPoints.map((depot) => (
+              <CircleMarker
+                key={depot.id}
+                center={depot.point}
+                radius={5}
+                pathOptions={{
+                  color: depot.isActive ? "#166534" : "#475569",
+                  fillColor: depot.isActive ? "#22c55e" : "#94a3b8",
+                  fillOpacity: 0.55,
+                  weight: 2,
+                }}
+              >
+                <Tooltip sticky>
+                  Depot ({depot.isActive ? "active" : "inactive"}) ({" "}
+                  {depot.point[0].toFixed(5)}, {depot.point[1].toFixed(5)})
+                </Tooltip>
+              </CircleMarker>
+            ))}
 
             {draftBoundaryPoints.length >= 3 ? (
               <Polygon
@@ -400,7 +607,12 @@ function ServiceAreaLocationPickerDialog({
                   fillOpacity: 0.85,
                   weight: 2,
                 }}
-              />
+              >
+                <Tooltip sticky>
+                  Draft boundary point {index + 1} ({point[0].toFixed(5)},{" "}
+                  {point[1].toFixed(5)})
+                </Tooltip>
+              </CircleMarker>
             ))}
 
             {draftPoint ? (
@@ -413,7 +625,12 @@ function ServiceAreaLocationPickerDialog({
                   fillOpacity: 0.35,
                   weight: 3,
                 }}
-              />
+              >
+                <Tooltip sticky>
+                  Draft center ({draftPoint[0].toFixed(5)},{" "}
+                  {draftPoint[1].toFixed(5)})
+                </Tooltip>
+              </CircleMarker>
             ) : null}
           </MapContainer>
         </div>

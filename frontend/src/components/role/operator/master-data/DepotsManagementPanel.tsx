@@ -6,6 +6,7 @@ import DepotLocationPickerDialog from "@/components/role/operator/master-data/De
 import type {
   DepotCreateFormPayload,
   DepotRecord,
+  ServiceAreaRecord,
 } from "@/components/role/operator/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,13 @@ type DepotListResponse = {
   items: DepotRecord[];
 };
 
+type ServiceAreaListResponse = {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ServiceAreaRecord[];
+};
+
 const LIST_LIMIT = 100;
 
 const EMPTY_FORM: DepotCreateFormPayload = {
@@ -87,6 +95,7 @@ function DepotsManagementPanel({
 }: DepotsManagementPanelProps) {
   const [loading, setLoading] = useState(true);
   const [depots, setDepots] = useState<DepotRecord[]>([]);
+  const [serviceAreas, setServiceAreas] = useState<ServiceAreaRecord[]>([]);
   const [totalDepots, setTotalDepots] = useState(0);
 
   const [queryText, setQueryText] = useState("");
@@ -114,22 +123,46 @@ function DepotsManagementPanel({
   const fetchDepots = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await axios.get<DepotListResponse>(
-        `${apiBaseUrl}/master-data/depots`,
-        {
+      const [depotsResult, serviceAreasResult] = await Promise.allSettled([
+        axios.get<DepotListResponse>(`${apiBaseUrl}/master-data/depots`, {
           headers,
           params: {
             limit: LIST_LIMIT,
             offset: 0,
           },
-        },
-      );
+        }),
+        axios.get<ServiceAreaListResponse>(
+          `${apiBaseUrl}/master-data/service-areas`,
+          {
+            headers,
+            params: {
+              limit: LIST_LIMIT,
+              offset: 0,
+            },
+          },
+        ),
+      ]);
 
-      setDepots(response.data.items);
-      setTotalDepots(response.data.total);
-      setErrorMessage("");
+      if (depotsResult.status === "fulfilled") {
+        setDepots(depotsResult.value.data.items);
+        setTotalDepots(depotsResult.value.data.total);
+        setErrorMessage("");
+      } else {
+        setDepots([]);
+        setTotalDepots(0);
+        setErrorMessage(
+          extractApiErrorMessage(depotsResult.reason, "Failed to load depots."),
+        );
+      }
+
+      if (serviceAreasResult.status === "fulfilled") {
+        setServiceAreas(serviceAreasResult.value.data.items);
+      } else {
+        setServiceAreas([]);
+      }
     } catch (error) {
       setDepots([]);
+      setServiceAreas([]);
       setTotalDepots(0);
       setErrorMessage(extractApiErrorMessage(error, "Failed to load depots."));
     } finally {
@@ -584,6 +617,9 @@ function DepotsManagementPanel({
         open={locationDialogOpen}
         onOpenChange={setLocationDialogOpen}
         selectedPoint={selectedPoint}
+        existingDepots={depots}
+        existingServiceAreas={serviceAreas}
+        currentDepotId={editingDepot?.id ?? null}
         onApply={(latitude, longitude) => {
           setFormState((prev) => ({
             ...prev,
