@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
 from app.core.config import settings
+from app.db.database import engine
 from app.services.mqtt_worker import mqtt_consumer_worker
 from app.services.stale_checker import stale_bin_checker
 from app.services.telemetry_retention import telemetry_retention_worker
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
         await stale_bin_checker.stop()
         await telemetry_retention_worker.stop()
         mqtt_consumer_worker.stop()
+        await engine.dispose()
 
     return app
 

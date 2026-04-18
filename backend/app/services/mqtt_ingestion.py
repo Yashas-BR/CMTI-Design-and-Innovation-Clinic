@@ -7,7 +7,7 @@ import hashlib
 import logging
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,19 +100,80 @@ def _parse_payload_time(raw_ts: Any, fallback: datetime) -> tuple[datetime, int 
     return fallback, ts_num, "unknown"
 
 
+def _token_candidates(bin_token: str) -> list[str]:
+    """Return lookup candidates that tolerate common token formatting drift."""
+    normalized = bin_token.strip()
+    if not normalized:
+        return []
+
+    candidates: list[str] = []
+
+    def _push(candidate: str) -> None:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    _push(normalized)
+    _push(normalized.replace("-", "_"))
+    _push(normalized.replace("_", "-"))
+    _push(normalized.upper())
+    _push(normalized.lower())
+    return candidates
+
+
 async def _resolve_bin_and_device(db: AsyncSession, bin_token: str) -> tuple[Bin, BinDevice | None]:
+    lookup_tokens = _token_candidates(bin_token)
+    if not lookup_tokens:
+        raise ValueError(f"bin not found for token {bin_token}")
+
+    for token in lookup_tokens:
+        device = (
+            await db.execute(
+                select(BinDevice).where(BinDevice.mqtt_client_id == token).limit(1)
+            )
+        ).scalar_one_or_none()
+
+        if device is not None:
+            bin_obj = (
+                await db.execute(select(Bin).where(Bin.id == device.bin_id).limit(1))
+            ).scalar_one_or_none()
+            if bin_obj is not None:
+                return bin_obj, device
+
+    for token in lookup_tokens:
+        bin_obj = (
+            await db.execute(select(Bin).where(Bin.bin_code == token).limit(1))
+        ).scalar_one_or_none()
+        if bin_obj is not None:
+            fallback_device = (
+                await db.execute(
+                    select(BinDevice).where(BinDevice.bin_id == bin_obj.id).limit(1)
+                )
+            ).scalar_one_or_none()
+            return bin_obj, fallback_device
+
+    lowered_tokens = {token.lower() for token in lookup_tokens}
+
     device = (
         await db.execute(
-            select(BinDevice).where(BinDevice.mqtt_client_id == bin_token).limit(1)
+            select(BinDevice)
+            .where(func.lower(BinDevice.mqtt_client_id).in_(lowered_tokens))
+            .limit(1)
         )
     ).scalar_one_or_none()
-
     if device is not None:
-        bin_obj = (await db.execute(select(Bin).where(Bin.id == device.bin_id).limit(1))).scalar_one_or_none()
+        bin_obj = (
+            await db.execute(select(Bin).where(Bin.id == device.bin_id).limit(1))
+        ).scalar_one_or_none()
         if bin_obj is not None:
             return bin_obj, device
 
-    bin_obj = (await db.execute(select(Bin).where(Bin.bin_code == bin_token).limit(1))).scalar_one_or_none()
+    bin_obj = (
+        await db.execute(
+            select(Bin)
+            .where(func.lower(Bin.bin_code).in_(lowered_tokens))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     if bin_obj is None:
         raise ValueError(f"bin not found for token {bin_token}")
 

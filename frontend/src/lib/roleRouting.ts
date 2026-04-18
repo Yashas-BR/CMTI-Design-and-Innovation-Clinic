@@ -42,7 +42,6 @@ export const ADMIN_DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   },
 ];
 
-
 export const OPERATOR_DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   { key: "overview", label: "Overview", path: OPERATOR_DASHBOARD_PATH },
   {
@@ -69,11 +68,6 @@ export const OPERATOR_DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     key: "alerts",
     label: "Alerts",
     path: `${OPERATOR_DASHBOARD_PATH}/alerts`,
-  },
-  {
-    key: "analytics",
-    label: "Analytics",
-    path: `${OPERATOR_DASHBOARD_PATH}/analytics`,
   },
   {
     key: "realtime",

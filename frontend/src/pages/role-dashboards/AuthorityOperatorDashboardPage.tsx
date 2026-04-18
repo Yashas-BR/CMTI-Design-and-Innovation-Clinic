@@ -3,6 +3,7 @@ import OperatorAlertsPanel from "@/components/role/operator/OperatorAlertsPanel"
 import OperatorAnalyticsPanel from "@/components/role/operator/OperatorAnalyticsPanel";
 import OperatorDriversPanel from "@/components/role/operator/OperatorDriversPanel";
 import OperatorMasterDataPanel from "@/components/role/operator/OperatorMasterDataPanel";
+import OperatorNavigationMapCard from "@/components/role/operator/OperatorNavigationMapCard";
 import OperatorNotificationsPanel from "@/components/role/operator/OperatorNotificationsPanel";
 import OperatorOperationsPanel from "@/components/role/operator/OperatorOperationsPanel";
 import OperatorRealtimePanel from "@/components/role/operator/OperatorRealtimePanel";
@@ -57,6 +58,14 @@ function AuthorityOperatorDashboardPage({
       session={session}
       onLogout={onLogout}
       navigationItems={OPERATOR_DASHBOARD_NAV_ITEMS}
+      belowNavigationContent={
+        isOverview ? (
+          <OperatorNavigationMapCard
+            accessToken={session.access_token}
+            apiBaseUrl={apiBaseUrl}
+          />
+        ) : null
+      }
     >
       {isOverview ? (
         <OperatorOverviewPanel

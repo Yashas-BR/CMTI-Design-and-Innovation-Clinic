@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
@@ -18,14 +19,26 @@ def _to_async_db_url(db_url: str) -> str:
     return db_url
 
 # Create async engine
-engine = create_async_engine(
-    _to_async_db_url(settings.database_url),
-    echo=settings.database_echo,
-    future=True,
-    pool_pre_ping=True,
-    pool_size=20,
-    max_overflow=0,
-)
+engine_kwargs = {
+    "echo": settings.database_echo,
+    "future": True,
+    "pool_pre_ping": True,
+}
+
+if settings.database_use_null_pool:
+    engine_kwargs["poolclass"] = NullPool
+else:
+    engine_kwargs.update(
+        {
+            "pool_size": max(int(settings.database_pool_size), 1),
+            "max_overflow": max(int(settings.database_max_overflow), 0),
+            "pool_timeout": max(float(settings.database_pool_timeout_seconds), 1.0),
+            "pool_recycle": max(int(settings.database_pool_recycle_seconds), 0),
+            "pool_use_lifo": bool(settings.database_pool_use_lifo),
+        }
+    )
+
+engine = create_async_engine(_to_async_db_url(settings.database_url), **engine_kwargs)
 
 # Create async session factory
 SessionLocal = async_sessionmaker(

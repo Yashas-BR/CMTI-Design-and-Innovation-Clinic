@@ -22,15 +22,53 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _bin_code_candidates(bin_code: str) -> list[str]:
+    """Return bin-code lookup candidates preserving input priority."""
+    normalized = bin_code.strip()
+    if not normalized:
+        return []
+
+    candidates = [normalized]
+    separator_swaps = (
+        normalized.replace("-", "_"),
+        normalized.replace("_", "-"),
+    )
+    for candidate in separator_swaps:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 async def _get_bin_by_code(db: AsyncSession, bin_code: str, org_id: int | None = None) -> Bin:
     """Fetch a bin by code, optionally scoped to an organization."""
-    stmt = select(Bin).where(Bin.bin_code == bin_code)
-    if org_id is not None:
-        stmt = stmt.where(Bin.org_id == org_id)
-    bin_obj = (await db.execute(stmt.limit(1))).scalar_one_or_none()
-    if bin_obj is None:
+    lookup_codes = _bin_code_candidates(bin_code)
+    if not lookup_codes:
         raise ValueError(f"bin not found: {bin_code}")
-    return bin_obj
+
+    for lookup_code in lookup_codes:
+        stmt = select(Bin).where(Bin.bin_code == lookup_code)
+        if org_id is not None:
+            stmt = stmt.where(Bin.org_id == org_id)
+        bin_obj = (await db.execute(stmt.limit(1))).scalar_one_or_none()
+        if bin_obj is not None:
+            return bin_obj
+
+    lowered_codes: list[str] = []
+    for lookup_code in lookup_codes:
+        lowered = lookup_code.lower()
+        if lowered in lowered_codes:
+            continue
+        lowered_codes.append(lowered)
+
+    for lowered in lowered_codes:
+        stmt = select(Bin).where(func.lower(Bin.bin_code) == lowered)
+        if org_id is not None:
+            stmt = stmt.where(Bin.org_id == org_id)
+        bin_obj = (await db.execute(stmt.limit(1))).scalar_one_or_none()
+        if bin_obj is not None:
+            return bin_obj
+
+    raise ValueError(f"bin not found: {bin_code}")
 
 
 async def get_bin_latest_state(db: AsyncSession, bin_code: str, org_id: int | None = None) -> dict[str, Any]:

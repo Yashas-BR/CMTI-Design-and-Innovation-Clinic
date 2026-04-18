@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Database Configuration
     database_url: str = "postgresql+asyncpg://user:password@localhost:5432/smart_waste_db"
     database_echo: bool = False
+    database_pool_size: int = 5
+    database_max_overflow: int = 0
+    database_pool_timeout_seconds: float = 30.0
+    database_pool_recycle_seconds: int = 1800
+    database_pool_use_lifo: bool = True
+    database_use_null_pool: bool = False
 
     # CORS Configuration
     cors_origins: List[str] = [

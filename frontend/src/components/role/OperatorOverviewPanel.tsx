@@ -21,13 +21,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { extractApiErrorMessage } from "@/lib/authApi";
 
@@ -36,7 +29,16 @@ type OperatorOverviewPanelProps = {
   apiBaseUrl: string;
 };
 
-type DateRangeDays = "7" | "30" | "90";
+type ListResponse<T> = {
+  total: number;
+  limit: number;
+  offset: number;
+  items: T[];
+};
+
+type ListQueryParams = Record<string, string | number | boolean>;
+
+const LIST_LIMIT = 100;
 
 type TelemetryLiveSummary = {
   total_bins: number;
@@ -46,28 +48,6 @@ type TelemetryLiveSummary = {
   overflow_imminent_bins: number;
   offline_bins: number;
   open_alerts: number;
-};
-
-type EfficiencyAnalytics = {
-  collections_per_hour: number;
-  distance_per_collection_km: number;
-  total_collections: number;
-  total_routes: number;
-  total_distance_km: number;
-};
-
-type SavingsAnalytics = {
-  optimized_distance_km: number;
-  naive_distance_km: number;
-  distance_saved_km: number;
-  distance_saved_pct: number;
-  fuel_saved_l: number;
-  fuel_saved_pct: number;
-};
-
-type EnvironmentalAnalytics = {
-  co2_saved_kg: number;
-  co2_reduction_pct: number;
 };
 
 type AlertItem = {
@@ -88,30 +68,29 @@ type OperationsListResponse = {
   total: number;
 };
 
+type BinRecord = {
+  area_id: number | null;
+};
+
+type ServiceAreaRecord = {
+  id: number;
+  name: string;
+};
+
 type OverviewSnapshot = {
   liveSummary: TelemetryLiveSummary;
-  efficiency: EfficiencyAnalytics;
-  savings: SavingsAnalytics;
-  environmental: EnvironmentalAnalytics;
   openAlerts: AlertListResponse;
+  topServiceAreas: Array<{ name: string; value: number }>;
   operations: {
-    totalVehicles: number;
     totalRoutes: number;
     totalShifts: number;
   };
 };
 
-const PIE_COLORS = ["#0ea5e9", "#f59e0b", "#ef4444", "#64748b"];
+const PIE_COLORS = ["#ef4444", "#f59e0b", "#22c55e"];
 
 function safeNumber(value: number | undefined | null): number {
   return Number.isFinite(value) ? Number(value) : 0;
-}
-
-function formatMetric(value: number, digits = 1): string {
-  return safeNumber(value).toLocaleString(undefined, {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits,
-  });
 }
 
 function formatAlertSeverity(value: string): string {
@@ -135,11 +114,43 @@ function severityBadgeClass(severity: string): string {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
+async function fetchAllPaginatedItems<T>(
+  url: string,
+  headers: { Authorization: string },
+  params: ListQueryParams = {},
+): Promise<T[]> {
+  const allItems: T[] = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get<ListResponse<T>>(url, {
+      headers,
+      params: {
+        ...params,
+        limit: LIST_LIMIT,
+        offset,
+      },
+    });
+
+    allItems.push(...response.data.items);
+
+    if (
+      response.data.items.length === 0 ||
+      allItems.length >= response.data.total
+    ) {
+      break;
+    }
+
+    offset += LIST_LIMIT;
+  }
+
+  return allItems;
+}
+
 function OperatorOverviewPanel({
   accessToken,
   apiBaseUrl,
 }: OperatorOverviewPanelProps) {
-  const [dateRangeDays, setDateRangeDays] = useState<DateRangeDays>("30");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null);
@@ -149,23 +160,15 @@ function OperatorOverviewPanel({
     setErrorMessage("");
 
     const headers = { Authorization: `Bearer ${accessToken}` };
-    const to = new Date();
-    const from = new Date();
-    from.setDate(to.getDate() - Number.parseInt(dateRangeDays, 10));
-
-    const fromIso = from.toISOString();
-    const toIso = to.toISOString();
 
     try {
       const [
         liveSummaryRes,
-        efficiencyRes,
-        savingsRes,
-        environmentalRes,
         openAlertsRes,
-        vehiclesRes,
         routesRes,
         shiftsRes,
+        bins,
+        serviceAreas,
       ] = await Promise.all([
         axios.get<TelemetryLiveSummary>(
           `${apiBaseUrl}/telemetry/live/summary`,
@@ -173,28 +176,9 @@ function OperatorOverviewPanel({
             headers,
           },
         ),
-        axios.get<EfficiencyAnalytics>(`${apiBaseUrl}/analytics/efficiency`, {
-          headers,
-          params: { from: fromIso, to: toIso },
-        }),
-        axios.get<SavingsAnalytics>(`${apiBaseUrl}/analytics/savings`, {
-          headers,
-          params: { from: fromIso, to: toIso },
-        }),
-        axios.get<EnvironmentalAnalytics>(
-          `${apiBaseUrl}/analytics/environmental`,
-          {
-            headers,
-            params: { from: fromIso, to: toIso },
-          },
-        ),
         axios.get<AlertListResponse>(`${apiBaseUrl}/alerts`, {
           headers,
           params: { status: "open", limit: 20, offset: 0 },
-        }),
-        axios.get<OperationsListResponse>(`${apiBaseUrl}/operations/vehicles`, {
-          headers,
-          params: { limit: 1, offset: 0 },
         }),
         axios.get<OperationsListResponse>(`${apiBaseUrl}/operations/routes`, {
           headers,
@@ -204,16 +188,43 @@ function OperatorOverviewPanel({
           headers,
           params: { limit: 1, offset: 0 },
         }),
+        fetchAllPaginatedItems<BinRecord>(`${apiBaseUrl}/bins`, headers, {
+          is_active: true,
+        }),
+        fetchAllPaginatedItems<ServiceAreaRecord>(
+          `${apiBaseUrl}/master-data/service-areas`,
+          headers,
+          { is_active: true },
+        ),
       ]);
+
+      const areaNameById = new Map<number, string>();
+      for (const area of serviceAreas) {
+        areaNameById.set(area.id, area.name);
+      }
+
+      const serviceAreaBinCount = new Map<string, number>();
+      for (const bin of bins) {
+        const label =
+          bin.area_id != null
+            ? (areaNameById.get(bin.area_id) ?? `Area ${bin.area_id}`)
+            : "Unassigned";
+        serviceAreaBinCount.set(
+          label,
+          (serviceAreaBinCount.get(label) ?? 0) + 1,
+        );
+      }
+
+      const topServiceAreas = [...serviceAreaBinCount.entries()]
+        .map(([name, value]) => ({ name, value }))
+        .sort((left, right) => right.value - left.value)
+        .slice(0, 5);
 
       setSnapshot({
         liveSummary: liveSummaryRes.data,
-        efficiency: efficiencyRes.data,
-        savings: savingsRes.data,
-        environmental: environmentalRes.data,
         openAlerts: openAlertsRes.data,
+        topServiceAreas,
         operations: {
-          totalVehicles: safeNumber(vehiclesRes.data.total),
           totalRoutes: safeNumber(routesRes.data.total),
           totalShifts: safeNumber(shiftsRes.data.total),
         },
@@ -229,7 +240,7 @@ function OperatorOverviewPanel({
     } finally {
       setLoading(false);
     }
-  }, [accessToken, apiBaseUrl, dateRangeDays]);
+  }, [accessToken, apiBaseUrl]);
 
   useEffect(() => {
     void fetchOverviewSnapshot();
@@ -259,17 +270,15 @@ function OperatorOverviewPanel({
       return [] as Array<{ name: string; value: number }>;
     }
 
-    const totalBins = safeNumber(snapshot.liveSummary.total_bins);
+    const binsWithState = safeNumber(snapshot.liveSummary.bins_with_state);
     const redBins = safeNumber(snapshot.liveSummary.red_bins);
     const yellowBins = safeNumber(snapshot.liveSummary.yellow_bins);
-    const trackedBins = Math.max(totalBins - redBins - yellowBins, 0);
-    const offlineBins = safeNumber(snapshot.liveSummary.offline_bins);
+    const lowBins = Math.max(binsWithState - redBins - yellowBins, 0);
 
     return [
-      { name: "Tracked", value: trackedBins },
-      { name: "Yellow", value: yellowBins },
-      { name: "Red", value: redBins },
-      { name: "Offline", value: offlineBins },
+      { name: "High (Red)", value: redBins },
+      { name: "Medium (Yellow)", value: yellowBins },
+      { name: "Low (Green)", value: lowBins },
     ];
   }, [snapshot]);
 
@@ -278,24 +287,7 @@ function OperatorOverviewPanel({
       return [] as Array<{ name: string; value: number }>;
     }
 
-    return [
-      {
-        name: "Collections/hr",
-        value: safeNumber(snapshot.efficiency.collections_per_hour),
-      },
-      {
-        name: "Fuel Saved (L)",
-        value: safeNumber(snapshot.savings.fuel_saved_l),
-      },
-      {
-        name: "CO2 Saved (kg)",
-        value: safeNumber(snapshot.environmental.co2_saved_kg),
-      },
-      {
-        name: "Distance Saved (km)",
-        value: safeNumber(snapshot.savings.distance_saved_km),
-      },
-    ];
+    return snapshot.topServiceAreas;
   }, [snapshot]);
 
   if (loading) {
@@ -326,7 +318,7 @@ function OperatorOverviewPanel({
   return (
     <div className="space-y-5">
       <Card className="border-white/80 bg-white/85 shadow-md backdrop-blur">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader>
           <div>
             <CardTitle>Operator Overview</CardTitle>
             <CardDescription>
@@ -334,27 +326,10 @@ function OperatorOverviewPanel({
               shifts, and impact analytics.
             </CardDescription>
           </div>
-          <div className="w-full max-w-55">
-            <Select
-              value={dateRangeDays}
-              onValueChange={(value) =>
-                setDateRangeDays(value as DateRangeDays)
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select date range" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">Last 7 days</SelectItem>
-                <SelectItem value="30">Last 30 days</SelectItem>
-                <SelectItem value="90">Last 90 days</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
         </CardHeader>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card className="border-white/80 bg-white/85 shadow-sm">
           <CardContent className="pt-5">
             <p className="text-xs uppercase tracking-wide text-slate-500">
@@ -396,21 +371,6 @@ function OperatorOverviewPanel({
             </p>
           </CardContent>
         </Card>
-
-        <Card className="border-white/80 bg-white/85 shadow-sm">
-          <CardContent className="pt-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Fleet
-            </p>
-            <p className="mt-2 text-3xl font-semibold text-slate-900">
-              {snapshot.operations.totalVehicles}
-            </p>
-            <p className="text-xs text-slate-600">
-              Distance saved: {formatMetric(snapshot.savings.distance_saved_km)}{" "}
-              km
-            </p>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -418,7 +378,8 @@ function OperatorOverviewPanel({
           <CardHeader>
             <CardTitle className="text-base">Bin Health Distribution</CardTitle>
             <CardDescription>
-              Live state counters from telemetry summary.
+              Count of bins in high, medium, and low fill from telemetry live
+              summary.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -454,32 +415,38 @@ function OperatorOverviewPanel({
           <CardHeader>
             <CardTitle className="text-base">Performance Snapshot</CardTitle>
             <CardDescription>
-              Efficiency, fuel and environmental savings in selected range.
+              Top 5 service areas by number of bins available.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={performanceBars}
-                  margin={{ top: 12, right: 12, left: 4, bottom: 24 }}
-                >
-                  <CartesianGrid strokeDasharray="4 4" stroke="#e2e8f0" />
-                  <XAxis
-                    dataKey="name"
-                    angle={-20}
-                    textAnchor="end"
-                    interval={0}
-                    height={56}
-                  />
-                  <YAxis />
-                  <Tooltip
-                    formatter={(value) => formatMetric(Number(value ?? 0), 2)}
-                  />
-                  <Bar dataKey="value" fill="#0ea5e9" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {performanceBars.length === 0 ? (
+              <p className="text-sm text-slate-600">
+                No service area bin data available.
+              </p>
+            ) : (
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={performanceBars}
+                    margin={{ top: 12, right: 12, left: 4, bottom: 24 }}
+                  >
+                    <CartesianGrid strokeDasharray="4 4" stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="name"
+                      angle={-20}
+                      textAnchor="end"
+                      interval={0}
+                      height={56}
+                    />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip
+                      formatter={(value) => Number(value ?? 0).toLocaleString()}
+                    />
+                    <Bar dataKey="value" fill="#0f766e" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -574,56 +541,6 @@ function OperatorOverviewPanel({
           </CardContent>
         </Card>
       </div>
-
-      <Card className="border-white/80 bg-white/85 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">Key Analytics Numbers</CardTitle>
-          <CardDescription>
-            Core metrics for executive demo and operational briefing.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Collections / Hour
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {formatMetric(snapshot.efficiency.collections_per_hour, 2)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Distance / Collection
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {formatMetric(snapshot.efficiency.distance_per_collection_km, 2)}{" "}
-              km
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Fuel Saved
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {formatMetric(snapshot.savings.fuel_saved_l, 2)} L
-            </p>
-            <p className="text-xs text-slate-600">
-              {formatMetric(snapshot.savings.fuel_saved_pct, 1)}%
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              CO2 Reduction
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {formatMetric(snapshot.environmental.co2_saved_kg, 2)} kg
-            </p>
-            <p className="text-xs text-slate-600">
-              {formatMetric(snapshot.environmental.co2_reduction_pct, 1)}%
-            </p>
-          </div>
-        </CardContent>
-      </Card>
 
       {errorMessage ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

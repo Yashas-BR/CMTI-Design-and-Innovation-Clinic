@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { BellRing, RefreshCw, Signal, Wifi, WifiOff } from "lucide-react";
 import {
@@ -52,7 +52,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { extractApiErrorMessage } from "@/lib/authApi";
+import { extractApiErrorMessage, refreshLoginSession } from "@/lib/authApi";
+import { loadStoredSession, saveStoredSession } from "@/lib/authStorage";
 import type { DataRow } from "@/types/dashboard";
 
 type OperatorRealtimePanelProps = {
@@ -123,15 +124,6 @@ type RealtimeBinUpdateEvent = {
   updated_at: string | null;
 };
 
-type RealtimeConnectedEvent = {
-  event: "connected";
-  org_id: number;
-  user_id: number;
-  message: string;
-};
-
-type RealtimeEvent = RealtimeBinUpdateEvent | RealtimeConnectedEvent;
-
 type LiveState = {
   last_measured_at: string | null;
   current_fill_pct: number | null;
@@ -153,11 +145,33 @@ type EventLogItem = {
 
 const LIST_LIMIT = 100;
 
-function buildRealtimeWsUrl(apiBaseUrl: string, accessToken: string): string {
-  const url = new URL(apiBaseUrl);
-  const protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const path = url.pathname.replace(/\/$/, "");
-  return `${protocol}//${url.host}${path}/realtime/ws/bin-states?token=${encodeURIComponent(accessToken)}`;
+function isUnauthorizedError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 401;
+}
+
+function buildBinCodeCandidates(binCode: string): string[] {
+  const normalized = binCode.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const candidates = [normalized];
+  const separatorSwaps = [
+    normalized.replace(/-/g, "_"),
+    normalized.replace(/_/g, "-"),
+  ];
+
+  for (const candidate of separatorSwaps) {
+    if (candidate && !candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates;
+}
+
+function normalizeBinCodeForMatch(binCode: string): string {
+  return binCode.trim().replace(/-/g, "_").toUpperCase();
 }
 
 function formatDateTime(value: string | null): string {
@@ -248,6 +262,7 @@ function OperatorRealtimePanel({
   accessToken,
   apiBaseUrl,
 }: OperatorRealtimePanelProps) {
+  const [activeAccessToken, setActiveAccessToken] = useState(accessToken);
   const [loading, setLoading] = useState(true);
   const [wsState, setWsState] = useState<
     "connecting" | "connected" | "disconnected"
@@ -276,10 +291,45 @@ function OperatorRealtimePanel({
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
+  const refreshInFlightRef = useRef<Promise<string | null> | null>(null);
+  const seenPolledEventKeysRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setActiveAccessToken(accessToken);
+  }, [accessToken]);
+
+  const refreshAccessToken = useCallback(async (): Promise<string | null> => {
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const refreshTask = (async () => {
+      try {
+        const storedSession = loadStoredSession();
+        if (!storedSession?.refresh_token) {
+          return null;
+        }
+
+        const refreshedSession = await refreshLoginSession({
+          refresh_token: storedSession.refresh_token,
+        });
+        saveStoredSession(refreshedSession);
+        setActiveAccessToken(refreshedSession.access_token);
+        return refreshedSession.access_token;
+      } catch {
+        return null;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+
+    refreshInFlightRef.current = refreshTask;
+    return refreshTask;
+  }, []);
 
   const headers = useMemo(
-    () => ({ Authorization: `Bearer ${accessToken}` }),
-    [accessToken],
+    () => ({ Authorization: `Bearer ${activeAccessToken}` }),
+    [activeAccessToken],
   );
 
   const deviceByBinId = useMemo(() => {
@@ -293,16 +343,30 @@ function OperatorRealtimePanel({
   }, [devices]);
 
   const fetchSummary = useCallback(async () => {
+    const getSummary = async (token: string) =>
+      axios.get<TelemetryLiveSummary>(`${apiBaseUrl}/telemetry/live/summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
     try {
-      const response = await axios.get<TelemetryLiveSummary>(
-        `${apiBaseUrl}/telemetry/live/summary`,
-        { headers },
-      );
+      const response = await getSummary(activeAccessToken);
       setSummary(response.data);
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) {
+          try {
+            const response = await getSummary(refreshedToken);
+            setSummary(response.data);
+            return;
+          } catch {
+            // Fall through to null summary when retry fails.
+          }
+        }
+      }
       setSummary(null);
     }
-  }, [apiBaseUrl, headers]);
+  }, [activeAccessToken, apiBaseUrl, refreshAccessToken]);
 
   const fetchSelectedBinHistory = useCallback(async () => {
     if (!selectedBinCode) {
@@ -314,17 +378,51 @@ function OperatorRealtimePanel({
 
     try {
       const parsedLimit = Number.parseInt(historyLimit, 10);
-      const response = await axios.get<TelemetryHistoryResponse>(
-        `${apiBaseUrl}/telemetry/bins/${selectedBinCode}/history`,
-        {
-          headers,
-          params: {
-            limit: Number.isFinite(parsedLimit) ? parsedLimit : 120,
-          },
-        },
-      );
+      const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 120;
+      const historyCodeCandidates = buildBinCodeCandidates(selectedBinCode);
 
-      setHistoryPoints(response.data.items);
+      let response: TelemetryHistoryResponse | null = null;
+      let lastError: unknown = null;
+
+      for (const codeCandidate of historyCodeCandidates) {
+        try {
+          const candidateResponse = await axios.get<TelemetryHistoryResponse>(
+            `${apiBaseUrl}/telemetry/bins/${encodeURIComponent(codeCandidate)}/history`,
+            {
+              headers,
+              params: { limit: safeLimit },
+            },
+          );
+          response = candidateResponse.data;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (
+            !axios.isAxiosError(error) ||
+            error.response?.status !== 404 ||
+            !String(error.response?.data?.detail ?? "")
+              .toLowerCase()
+              .includes("bin not found")
+          ) {
+            throw error;
+          }
+        }
+      }
+
+      if (response == null) {
+        throw lastError;
+      }
+
+      setHistoryPoints(response.items);
+      const responseCode = normalizeBinCodeForMatch(response.bin_code);
+      const resolvedCode =
+        bins.find(
+          (bin) => normalizeBinCodeForMatch(bin.bin_code) === responseCode,
+        )?.bin_code ?? response.bin_code;
+
+      if (resolvedCode !== selectedBinCode) {
+        setSelectedBinCode(resolvedCode);
+      }
     } catch (error) {
       setHistoryPoints([]);
       setHistoryError(
@@ -336,7 +434,7 @@ function OperatorRealtimePanel({
     } finally {
       setHistoryLoading(false);
     }
-  }, [apiBaseUrl, headers, historyLimit, selectedBinCode]);
+  }, [apiBaseUrl, bins, headers, historyLimit, selectedBinCode]);
 
   const fetchBootstrapData = useCallback(async () => {
     setLoading(true);
@@ -444,101 +542,175 @@ function OperatorRealtimePanel({
     };
   }, [fetchSummary]);
 
+  const pollSelectedBinTelemetry = useCallback(async () => {
+    if (!selectedBinCode) {
+      return;
+    }
+
+    const codeCandidates = buildBinCodeCandidates(selectedBinCode);
+    let response: TelemetryLatest | null = null;
+
+    for (const codeCandidate of codeCandidates) {
+      try {
+        const candidateResponse = await axios.get<TelemetryLatest>(
+          `${apiBaseUrl}/telemetry/bins/${encodeURIComponent(codeCandidate)}/latest`,
+          {
+            headers,
+          },
+        );
+        response = candidateResponse.data;
+        break;
+      } catch (error) {
+        if (
+          !axios.isAxiosError(error) ||
+          error.response?.status !== 404 ||
+          !String(error.response?.data?.detail ?? "")
+            .toLowerCase()
+            .includes("bin not found")
+        ) {
+          throw error;
+        }
+      }
+    }
+
+    if (response == null) {
+      return;
+    }
+
+    const responseCode = normalizeBinCodeForMatch(response.bin_code);
+    const resolvedCode =
+      bins.find(
+        (bin) => normalizeBinCodeForMatch(bin.bin_code) === responseCode,
+      )?.bin_code ?? response.bin_code;
+    const resolvedBin =
+      bins.find((bin) => bin.bin_code === resolvedCode) ??
+      bins.find(
+        (bin) => normalizeBinCodeForMatch(bin.bin_code) === responseCode,
+      ) ??
+      null;
+
+    if (resolvedCode !== selectedBinCode) {
+      setSelectedBinCode(resolvedCode);
+    }
+
+    setLiveByBinCode((previous) => {
+      const current = previous[resolvedCode];
+      return {
+        ...previous,
+        [resolvedCode]: {
+          last_measured_at: response.last_measured_at,
+          current_fill_pct: response.current_fill_pct,
+          current_fill_rate_pct_per_min: response.current_fill_rate_pct_per_min,
+          current_ttf_min: response.current_ttf_min,
+          current_priority_score: response.current_priority_score,
+          current_alert_level: response.current_alert_level,
+          overflow_imminent: response.overflow_imminent,
+          device_connectivity_state:
+            response.device_connectivity_state ??
+            current?.device_connectivity_state ??
+            "unknown",
+          queued_count: response.queued_count,
+          updated_at: response.last_measured_at,
+        },
+      };
+    });
+
+    const eventKey = [
+      resolvedCode,
+      response.last_measured_at ?? "n",
+      response.current_fill_pct ?? "n",
+      response.current_priority_score ?? "n",
+      response.current_alert_level ?? "n",
+      response.overflow_imminent ? 1 : 0,
+      response.queued_count,
+    ].join("|");
+
+    if (seenPolledEventKeysRef.current.has(eventKey)) {
+      return;
+    }
+    seenPolledEventKeysRef.current.add(eventKey);
+
+    const payload: RealtimeBinUpdateEvent = {
+      event: "bin_current_state_updated",
+      org_id: 0,
+      bin_id: resolvedBin?.id ?? 0,
+      bin_code: resolvedCode,
+      last_measured_at: response.last_measured_at,
+      current_fill_pct: response.current_fill_pct,
+      current_fill_rate_pct_per_min: response.current_fill_rate_pct_per_min,
+      current_ttf_min: response.current_ttf_min,
+      current_priority_score: response.current_priority_score,
+      current_alert_level: response.current_alert_level,
+      overflow_imminent: response.overflow_imminent,
+      device_connectivity_state: response.device_connectivity_state,
+      queued_count: response.queued_count,
+      updated_at: response.last_measured_at,
+    };
+
+    setEventLog((previous) =>
+      [
+        {
+          id: `${payload.bin_code}-${payload.last_measured_at ?? "n"}`,
+          received_at: payload.last_measured_at ?? new Date().toISOString(),
+          payload,
+        },
+        ...previous,
+      ].slice(0, 120),
+    );
+  }, [apiBaseUrl, bins, headers, selectedBinCode]);
+
   useEffect(() => {
-    const wsUrl = buildRealtimeWsUrl(apiBaseUrl, accessToken);
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
     let disposed = false;
 
-    const connect = () => {
+    const poll = async () => {
       if (disposed) {
         return;
       }
 
-      setWsState("connecting");
-      socket = new WebSocket(wsUrl);
+      if (document.visibilityState !== "visible") {
+        return;
+      }
 
-      socket.onopen = () => {
+      try {
+        setWsState((previous) =>
+          previous === "connected" ? previous : "connecting",
+        );
+        await pollSelectedBinTelemetry();
         if (!disposed) {
           setWsState("connected");
         }
-      };
-
-      socket.onmessage = (event) => {
-        let parsed: RealtimeEvent;
-        try {
-          parsed = JSON.parse(event.data) as RealtimeEvent;
-        } catch {
-          return;
-        }
-
-        if (parsed.event !== "bin_current_state_updated") {
-          return;
-        }
-
-        setLiveByBinCode((previous) => ({
-          ...previous,
-          [parsed.bin_code]: {
-            last_measured_at: parsed.last_measured_at,
-            current_fill_pct: parsed.current_fill_pct,
-            current_fill_rate_pct_per_min: parsed.current_fill_rate_pct_per_min,
-            current_ttf_min: parsed.current_ttf_min,
-            current_priority_score: parsed.current_priority_score,
-            current_alert_level: parsed.current_alert_level,
-            overflow_imminent: parsed.overflow_imminent,
-            device_connectivity_state: parsed.device_connectivity_state,
-            queued_count: parsed.queued_count,
-            updated_at: parsed.updated_at,
-          },
-        }));
-
-        const nowIso = new Date().toISOString();
-        setEventLog((previous) => {
-          const next: EventLogItem[] = [
-            {
-              id: `${parsed.bin_id}-${nowIso}-${Math.random()}`,
-              received_at: nowIso,
-              payload: parsed,
-            },
-            ...previous,
-          ];
-          return next.slice(0, 120);
-        });
-      };
-
-      socket.onclose = () => {
-        if (disposed) {
-          return;
-        }
-        setWsState("disconnected");
-        reconnectTimer = window.setTimeout(connect, 3000);
-      };
-
-      socket.onerror = () => {
+      } catch {
         if (!disposed) {
           setWsState("disconnected");
         }
-      };
+      }
     };
 
-    connect();
+    setNoticeMessage(
+      "Realtime feed mode: polling telemetry service for latest MQTT-ingested data.",
+    );
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 15000);
 
     return () => {
       disposed = true;
-      if (reconnectTimer != null) {
-        window.clearTimeout(reconnectTimer);
-      }
-      if (socket) {
-        const currentSocket = socket;
-        if (
-          currentSocket.readyState === WebSocket.OPEN ||
-          currentSocket.readyState === WebSocket.CONNECTING
-        ) {
-          currentSocket.close();
-        }
-      }
+      window.clearInterval(timer);
     };
-  }, [accessToken, apiBaseUrl]);
+  }, [pollSelectedBinTelemetry]);
+
+  const selectedBinEventLog = useMemo(() => {
+    if (!selectedBinCode) {
+      return eventLog;
+    }
+    const selectedCode = normalizeBinCodeForMatch(selectedBinCode);
+    return eventLog.filter(
+      (item) =>
+        normalizeBinCodeForMatch(item.payload.bin_code) === selectedCode,
+    );
+  }, [eventLog, selectedBinCode]);
 
   const filteredBins = useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -572,7 +744,12 @@ function OperatorRealtimePanel({
     if (!selectedBinCode) {
       return null;
     }
-    return bins.find((bin) => bin.bin_code === selectedBinCode) ?? null;
+    const selectedCode = normalizeBinCodeForMatch(selectedBinCode);
+    return (
+      bins.find(
+        (bin) => normalizeBinCodeForMatch(bin.bin_code) === selectedCode,
+      ) ?? null
+    );
   }, [bins, selectedBinCode]);
 
   const selectedLive = selectedBin ? liveByBinCode[selectedBin.bin_code] : null;
@@ -752,8 +929,8 @@ function OperatorRealtimePanel({
               Realtime MQTT Telemetry Dashboard
             </CardTitle>
             <CardDescription>
-              Live bin current-state updates streamed from backend WebSocket
-              fanout.
+              Live bin current-state updates pulled from telemetry service
+              snapshots populated by MQTT ingestion.
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
@@ -937,18 +1114,23 @@ function OperatorRealtimePanel({
           <CardHeader>
             <CardTitle>Live Event Stream</CardTitle>
             <CardDescription>
-              Most recent websocket updates pushed after MQTT ingestion and
+              Most recent telemetry updates recorded after MQTT ingestion and
               state transitions.
+              {selectedBinCode
+                ? ` Showing selected bin events for ${selectedBinCode}.`
+                : ""}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {eventLog.length === 0 ? (
+            {selectedBinEventLog.length === 0 ? (
               <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                Waiting for live updates.
+                {selectedBinCode
+                  ? `Waiting for live updates for ${selectedBinCode}.`
+                  : "Waiting for live updates."}
               </p>
             ) : (
               <div className="max-h-120 space-y-2 overflow-y-auto pr-1">
-                {eventLog.slice(0, 30).map((item) => (
+                {selectedBinEventLog.slice(0, 30).map((item) => (
                   <div
                     key={item.id}
                     className="rounded-lg border bg-slate-50 p-2.5 text-xs"
@@ -1484,9 +1666,9 @@ function OperatorRealtimePanel({
       </Dialog>
 
       <p className="text-xs text-muted-foreground">
-        Realtime stream source: WebSocket endpoint
-        /api/v1/realtime/ws/bin-states with MQTT-driven bin current state
-        events.
+        Realtime stream source: telemetry history polling endpoint
+        /api/v1/telemetry/bins/{"{"}bin_code{"}"}/history with MQTT-driven bin
+        telemetry events.
       </p>
     </div>
   );

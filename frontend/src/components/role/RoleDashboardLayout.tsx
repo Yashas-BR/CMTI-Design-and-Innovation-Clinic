@@ -20,6 +20,7 @@ type RoleDashboardLayoutProps = {
   session: LoginResponse;
   onLogout: () => void;
   navigationItems: DashboardNavItem[];
+  belowNavigationContent?: React.ReactNode;
   children: React.ReactNode;
 };
 
@@ -30,6 +31,7 @@ function RoleDashboardLayout({
   session,
   onLogout,
   navigationItems,
+  belowNavigationContent,
   children,
 }: RoleDashboardLayoutProps) {
   return (
@@ -108,6 +110,8 @@ function RoleDashboardLayout({
             ))}
           </CardContent>
         </Card>
+
+        {belowNavigationContent}
 
         {children}
       </div>
