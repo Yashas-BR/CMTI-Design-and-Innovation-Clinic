@@ -1,6 +1,6 @@
 """Schemas for operations route stop and collection event APIs."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -59,3 +59,24 @@ class RouteStopListResponse(BaseModel):
     limit: int
     offset: int
     items: list[RouteStopResponse]
+
+
+class DriverStopResponse(RouteStopResponse):
+    """Driver-scoped stop item enriched with route and assignment context."""
+
+    route_code: str
+    route_date: date | None = None
+    route_status: str
+    assignment_id: int
+    assignment_status: str
+    vehicle_id: int | None = None
+    bin_code: str
+
+
+class DriverStopListResponse(BaseModel):
+    """Paginated driver-scoped stop list."""
+
+    total: int
+    limit: int
+    offset: int
+    items: list[DriverStopResponse]

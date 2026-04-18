@@ -1096,6 +1096,106 @@ async def list_routes(
     }
 
 
+async def list_driver_routes(
+    db: AsyncSession,
+    org_id: int,
+    *,
+    driver_user_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
+    route_date: date | None = None,
+    assignment_status: str | None = None,
+) -> dict[str, Any]:
+    """Return paginated routes assigned to one driver with assignment metadata."""
+    safe_limit = min(max(limit, 1), 100)
+    safe_offset = max(offset, 0)
+
+    latest_assignment_subquery = (
+        select(
+            RouteAssignment.route_id.label("route_id"),
+            func.max(RouteAssignment.id).label("assignment_id"),
+        )
+        .where(RouteAssignment.driver_user_id == driver_user_id)
+        .group_by(RouteAssignment.route_id)
+        .subquery()
+    )
+
+    route_stops_count_subquery = (
+        select(RouteStop.route_id, func.count(RouteStop.id).label("stops_count"))
+        .group_by(RouteStop.route_id)
+        .subquery()
+    )
+
+    filters = [Route.org_id == org_id]
+    if status:
+        filters.append(Route.status == status)
+    if route_date is not None:
+        filters.append(Route.route_date == route_date)
+    if assignment_status:
+        filters.append(RouteAssignment.status == assignment_status)
+
+    base_query = (
+        select(
+            Route,
+            RouteAssignment,
+            route_stops_count_subquery.c.stops_count,
+        )
+        .join(
+            latest_assignment_subquery,
+            latest_assignment_subquery.c.route_id == Route.id,
+        )
+        .join(
+            RouteAssignment,
+            RouteAssignment.id == latest_assignment_subquery.c.assignment_id,
+        )
+        .outerjoin(
+            route_stops_count_subquery,
+            route_stops_count_subquery.c.route_id == Route.id,
+        )
+        .where(*filters)
+    )
+
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(base_query.subquery())
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await db.execute(
+            base_query
+            .order_by(Route.route_date.desc(), Route.id.desc())
+            .limit(safe_limit)
+            .offset(safe_offset)
+        )
+    ).all()
+
+    items: list[dict[str, Any]] = []
+    for route, assignment, stops_count in rows:
+        route_payload = _route_to_dict(route, stops_count=int(stops_count or 0))
+        route_payload.update(
+            {
+                "assignment_id": int(assignment.id),
+                "assignment_status": assignment.status,
+                "assigned_at": assignment.assigned_at,
+                "accepted_at": assignment.accepted_at,
+                "rejected_at": assignment.rejected_at,
+                "reject_reason": assignment.reject_reason,
+                "vehicle_id": assignment.vehicle_id,
+            }
+        )
+        items.append(route_payload)
+
+    return {
+        "total": int(total),
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
+    }
+
+
 async def get_route(
     db: AsyncSession,
     org_id: int,

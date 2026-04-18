@@ -13,6 +13,10 @@ async def _authority_user_override() -> AuthUser:
     return AuthUser(id=10, org_id=1, email="authority@example.com", roles={"authority_admin"})
 
 
+async def _driver_user_override() -> AuthUser:
+    return AuthUser(id=22, org_id=1, email="driver@example.com", roles={"driver"})
+
+
 @pytest.mark.asyncio
 async def test_plan_route_route_returns_plan_payload() -> None:
     """Route planning endpoint should return deterministic plan contract."""
@@ -160,6 +164,74 @@ async def test_list_routes_route_returns_items() -> None:
 
     assert response.status_code == 200
     assert response.json()["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_my_routes_route_returns_items() -> None:
+    """Driver route list endpoint should return assigned route payload."""
+    mock_result = {
+        "total": 1,
+        "limit": 50,
+        "offset": 0,
+        "items": [
+            {
+                "id": 7001,
+                "org_id": 1,
+                "route_code": "R-20260418-A",
+                "route_date": "2026-04-18",
+                "depot_id": 2,
+                "status": "published",
+                "total_distance_km": 8.2,
+                "estimated_duration_min": 34.5,
+                "optimization_run_id": None,
+                "created_by": 10,
+                "updated_by": 10,
+                "stops_count": 3,
+                "start_point": None,
+                "assignment_id": 90001,
+                "assignment_status": "accepted",
+                "assigned_at": "2026-04-17T10:00:00Z",
+                "accepted_at": "2026-04-17T10:05:00Z",
+                "rejected_at": None,
+                "reject_reason": None,
+                "vehicle_id": 3,
+                "created_at": "2026-04-17T10:00:00Z",
+                "updated_at": "2026-04-17T10:05:00Z",
+            }
+        ],
+    }
+
+    app.dependency_overrides[require_authority_or_driver_user] = _driver_user_override
+    try:
+        with patch("app.api.v1.operations.list_driver_routes", new=AsyncMock(return_value=mock_result)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/api/v1/operations/my-routes")
+    finally:
+        app.dependency_overrides.pop(require_authority_or_driver_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["assignment_status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_driver_list_my_routes_forces_self_scope() -> None:
+    """Driver my-routes endpoint must ignore requested driver_user_id and use auth user id."""
+    list_mock = AsyncMock(return_value={"total": 0, "limit": 50, "offset": 0, "items": []})
+
+    app.dependency_overrides[require_authority_or_driver_user] = _driver_user_override
+    try:
+        with patch("app.api.v1.operations.list_driver_routes", new=list_mock):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/api/v1/operations/my-routes?driver_user_id=999")
+    finally:
+        app.dependency_overrides.pop(require_authority_or_driver_user, None)
+
+    assert response.status_code == 200
+    assert list_mock.await_count == 1
+    assert list_mock.await_args.kwargs["driver_user_id"] == 22
 
 
 @pytest.mark.asyncio

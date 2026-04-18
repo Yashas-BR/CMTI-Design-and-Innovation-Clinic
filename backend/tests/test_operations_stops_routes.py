@@ -55,6 +55,70 @@ async def test_list_route_stops_route_returns_items() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_my_stops_route_returns_items() -> None:
+    """My stops endpoint should return driver-scoped stop items."""
+    mock_result = {
+        "total": 1,
+        "limit": 100,
+        "offset": 0,
+        "items": [
+            {
+                "id": 501,
+                "route_id": 7001,
+                "stop_sequence": 1,
+                "bin_id": 101,
+                "planned_eta": None,
+                "planned_service_minutes": None,
+                "priority_snapshot": None,
+                "status": "pending",
+                "actual_arrival": None,
+                "actual_departure": None,
+                "skip_reason": None,
+                "route_code": "R-20260418-A",
+                "route_date": "2026-04-18",
+                "route_status": "in_progress",
+                "assignment_id": 90001,
+                "assignment_status": "accepted",
+                "vehicle_id": 3,
+                "bin_code": "BIN-A001",
+            }
+        ],
+    }
+
+    app.dependency_overrides[require_authority_or_driver_user] = _driver_user_override
+    try:
+        with patch("app.api.v1.operations.list_driver_stops", new=AsyncMock(return_value=mock_result)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/api/v1/operations/my-stops")
+    finally:
+        app.dependency_overrides.pop(require_authority_or_driver_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["route_code"] == "R-20260418-A"
+
+
+@pytest.mark.asyncio
+async def test_driver_list_my_stops_forces_self_scope() -> None:
+    """Driver my-stops endpoint must ignore requested driver_user_id and use auth user id."""
+    list_mock = AsyncMock(return_value={"total": 0, "limit": 100, "offset": 0, "items": []})
+
+    app.dependency_overrides[require_authority_or_driver_user] = _driver_user_override
+    try:
+        with patch("app.api.v1.operations.list_driver_stops", new=list_mock):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/api/v1/operations/my-stops?driver_user_id=999")
+    finally:
+        app.dependency_overrides.pop(require_authority_or_driver_user, None)
+
+    assert response.status_code == 200
+    assert list_mock.await_count == 1
+    assert list_mock.await_args.kwargs["driver_user_id"] == 22
+
+
+@pytest.mark.asyncio
 async def test_driver_list_route_stops_scoped_to_self() -> None:
     """Driver route stop list should be scoped to authenticated driver id."""
     list_mock = AsyncMock(return_value={"total": 0, "limit": 100, "offset": 0, "items": []})

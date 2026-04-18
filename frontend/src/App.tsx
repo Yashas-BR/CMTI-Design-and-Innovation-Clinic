@@ -249,6 +249,7 @@ function App() {
               user={user as UserSummaryResponse}
               session={session as LoginResponse}
               onLogout={handleLogout}
+              apiBaseUrl={apiBaseUrl}
             />
           </ProtectedRoleRoute>
         }
@@ -266,6 +267,7 @@ function App() {
               user={user as UserSummaryResponse}
               session={session as LoginResponse}
               onLogout={handleLogout}
+              apiBaseUrl={apiBaseUrl}
             />
           </ProtectedRoleRoute>
         }

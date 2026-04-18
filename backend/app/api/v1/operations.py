@@ -15,6 +15,7 @@ from app.schemas.operations_assignment import (
     RouteAssignmentResponse,
 )
 from app.schemas.operations_route import (
+    DriverRouteListResponse,
     RouteDraftCreateRequest,
     RouteListResponse,
     RoutePlanRequest,
@@ -24,6 +25,7 @@ from app.schemas.operations_route import (
 )
 from app.schemas.operations_shift import ShiftCreateRequest, ShiftListResponse, ShiftResponse
 from app.schemas.operations_stop import (
+    DriverStopListResponse,
     RouteStopListResponse,
     RouteStopResponse,
     StopArriveRequest,
@@ -41,13 +43,14 @@ from app.services.operations_routes import (
     complete_route,
     create_route_draft,
     get_route,
+    list_driver_routes,
     list_routes,
     plan_route,
     publish_route,
     start_route,
 )
 from app.services.operations_shifts import complete_shift, create_shift, get_shift, list_shifts, start_shift
-from app.services.operations_stops import arrive_stop, list_route_stops, service_stop, skip_stop
+from app.services.operations_stops import arrive_stop, list_driver_stops, list_route_stops, service_stop, skip_stop
 from app.services.operations_vehicles import create_vehicle, deactivate_vehicle, get_vehicle, list_vehicles, update_vehicle
 
 router = APIRouter(prefix="/operations")
@@ -339,6 +342,37 @@ async def list_routes_route(
     return RouteListResponse(**data)
 
 
+@router.get("/my-routes", response_model=DriverRouteListResponse)
+async def list_my_routes_route(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status_filter: str | None = Query(default=None, alias="status"),
+    route_date: date | None = None,
+    assignment_status: str | None = None,
+    driver_user_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(require_authority_or_driver_user),
+) -> DriverRouteListResponse:
+    """List routes assigned to the authenticated driver (or explicit driver for authority)."""
+    scoped_driver_user_id = driver_user_id
+    if not _is_authority(user):
+        scoped_driver_user_id = user.id
+    elif scoped_driver_user_id is None:
+        scoped_driver_user_id = user.id
+
+    data = await list_driver_routes(
+        db,
+        user.org_id,
+        driver_user_id=scoped_driver_user_id,
+        limit=limit,
+        offset=offset,
+        status=status_filter,
+        route_date=route_date,
+        assignment_status=assignment_status,
+    )
+    return DriverRouteListResponse(**data)
+
+
 @router.get("/routes/{route_id}", response_model=RouteResponse)
 async def get_route_route(
     route_id: int,
@@ -557,6 +591,39 @@ async def list_route_stops_route(
         raise HTTPException(status_code=_status_for_value_error(exc), detail=str(exc)) from exc
 
     return RouteStopListResponse(**data)
+
+
+@router.get("/my-stops", response_model=DriverStopListResponse)
+async def list_my_stops_route(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    status_filter: str | None = Query(default=None, alias="status"),
+    route_status: str | None = None,
+    route_date: date | None = None,
+    assignment_status: str | None = None,
+    driver_user_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(require_authority_or_driver_user),
+) -> DriverStopListResponse:
+    """List stops across routes assigned to authenticated driver (or explicit driver for authority)."""
+    scoped_driver_user_id = driver_user_id
+    if not _is_authority(user):
+        scoped_driver_user_id = user.id
+    elif scoped_driver_user_id is None:
+        scoped_driver_user_id = user.id
+
+    data = await list_driver_stops(
+        db,
+        user.org_id,
+        driver_user_id=scoped_driver_user_id,
+        limit=limit,
+        offset=offset,
+        status=status_filter,
+        route_status=route_status,
+        route_date=route_date,
+        assignment_status=assignment_status,
+    )
+    return DriverStopListResponse(**data)
 
 
 @router.post("/stops/{stop_id}/arrive", response_model=RouteStopResponse)

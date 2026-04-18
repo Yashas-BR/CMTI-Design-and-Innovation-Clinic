@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -144,6 +144,99 @@ async def list_route_stops(
         "limit": safe_limit,
         "offset": safe_offset,
         "items": [_stop_to_dict(row) for row in rows],
+    }
+
+
+async def list_driver_stops(
+    db: AsyncSession,
+    org_id: int,
+    *,
+    driver_user_id: int,
+    limit: int = 100,
+    offset: int = 0,
+    status: str | None = None,
+    route_status: str | None = None,
+    route_date: date | None = None,
+    assignment_status: str | None = None,
+) -> dict[str, Any]:
+    """List stops across routes assigned to one driver with route and assignment context."""
+    safe_limit = min(max(limit, 1), 500)
+    safe_offset = max(offset, 0)
+
+    latest_assignment_subquery = (
+        select(
+            RouteAssignment.route_id.label("route_id"),
+            func.max(RouteAssignment.id).label("assignment_id"),
+        )
+        .where(RouteAssignment.driver_user_id == driver_user_id)
+        .group_by(RouteAssignment.route_id)
+        .subquery()
+    )
+
+    filters = [Route.org_id == org_id]
+    if status:
+        filters.append(RouteStop.status == status)
+    if route_status:
+        filters.append(Route.status == route_status)
+    if route_date is not None:
+        filters.append(Route.route_date == route_date)
+    if assignment_status:
+        filters.append(RouteAssignment.status == assignment_status)
+
+    base_query = (
+        select(
+            RouteStop,
+            Route,
+            RouteAssignment,
+            Bin.bin_code,
+        )
+        .join(Route, Route.id == RouteStop.route_id)
+        .join(
+            latest_assignment_subquery,
+            latest_assignment_subquery.c.route_id == Route.id,
+        )
+        .join(
+            RouteAssignment,
+            RouteAssignment.id == latest_assignment_subquery.c.assignment_id,
+        )
+        .join(Bin, Bin.id == RouteStop.bin_id)
+        .where(*filters)
+    )
+
+    total = (
+        await db.execute(select(func.count()).select_from(base_query.subquery()))
+    ).scalar_one() or 0
+
+    rows = (
+        await db.execute(
+            base_query
+            .order_by(Route.route_date.desc(), Route.id.desc(), RouteStop.stop_sequence.asc())
+            .limit(safe_limit)
+            .offset(safe_offset)
+        )
+    ).all()
+
+    items: list[dict[str, Any]] = []
+    for stop, route, assignment, bin_code in rows:
+        stop_payload = _stop_to_dict(stop)
+        stop_payload.update(
+            {
+                "route_code": route.route_code,
+                "route_date": route.route_date,
+                "route_status": route.status,
+                "assignment_id": int(assignment.id),
+                "assignment_status": assignment.status,
+                "vehicle_id": assignment.vehicle_id,
+                "bin_code": bin_code,
+            }
+        )
+        items.append(stop_payload)
+
+    return {
+        "total": int(total),
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
     }
 
 

@@ -130,3 +130,24 @@ class RouteListResponse(BaseModel):
     limit: int
     offset: int
     items: list[RouteResponse]
+
+
+class DriverRouteSummaryResponse(RouteResponse):
+    """Driver-scoped route item including latest assignment metadata."""
+
+    assignment_id: int
+    assignment_status: str
+    assigned_at: datetime
+    accepted_at: datetime | None = None
+    rejected_at: datetime | None = None
+    reject_reason: str | None = None
+    vehicle_id: int | None = None
+
+
+class DriverRouteListResponse(BaseModel):
+    """Paginated route list visible to one driver."""
+
+    total: int
+    limit: int
+    offset: int
+    items: list[DriverRouteSummaryResponse]
